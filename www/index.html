@@ -37,6 +37,11 @@
     <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/></symbol>
     <symbol id="i-cards" viewBox="0 0 24 24"><rect x="6" y="3" width="13" height="17" rx="2"/><path d="M4 7v12a2 2 0 0 0 2 2h9"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor"/></symbol>
+    <symbol id="i-list-plus" viewBox="0 0 24 24"><path d="M3 6h12M3 12h12M3 18h7M18 14v7M14.5 17.5h7"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
   </svg>
 
   <div id="app">
@@ -46,6 +51,11 @@
         <h1>Til Player</h1>
         <button id="btn-add" class="btn primary"><svg><use href="#i-plus"/></svg>Video qoʻshish</button>
       </header>
+      <div class="seg" id="lib-tabs" role="tablist">
+        <button data-tab="videos" class="active"><svg><use href="#i-film"/></svg>Videolar</button>
+        <button data-tab="playlists"><svg><use href="#i-list"/></svg>Playlistlar</button>
+      </div>
+      <div id="playlist-list" class="library hidden"></div>
       <div id="library-list" class="library"></div>
       <div id="library-empty" class="empty hidden">
         <svg class="empty-ic"><use href="#i-film"/></svg>
@@ -87,6 +97,9 @@
         <label class="row">Soʻz bosilganda videoni toʻxtatish <input id="set-pause-tap" type="checkbox" class="switch"></label>
         <label class="row">Subtitr ostida oʻzbekcha tarjimani avtomatik koʻrsatish (internet kerak) <input id="set-autotr" type="checkbox" class="switch"></label>
 
+        <h3>Playlist</h3>
+        <label class="row">Video tugagach keyingisini avtomatik boshlash <input id="set-autonext" type="checkbox" class="switch"></label>
+
         <h3>Listening</h3>
         <label class="row">Har bir gapdan keyin toʻxtash <input id="set-listen-pause" type="checkbox" class="switch"></label>
         <label class="row">Subtitrni yashirish (bosganda koʻrinadi) <input id="set-listen-hide" type="checkbox" class="switch"></label>
@@ -120,6 +133,24 @@
       </div>
     </section>
 
+    <!-- PLAYLIST -->
+    <section id="view-playlist" class="view">
+      <header class="topbar">
+        <button id="pl-back" class="icon-btn" aria-label="Orqaga"><svg><use href="#i-left"/></svg></button>
+        <h2 id="pl-title"></h2>
+        <button id="pl-rename" class="icon-btn" title="Nomini oʻzgartirish"><svg><use href="#i-edit"/></svg></button>
+        <button id="pl-delete" class="icon-btn" title="Playlistni oʻchirish"><svg><use href="#i-trash"/></svg></button>
+      </header>
+      <div class="pad">
+        <div id="pl-info" class="muted small"></div>
+        <div class="btn-row">
+          <button id="pl-play" class="btn primary"><svg><use href="#i-play"/></svg>Ijro etish</button>
+          <button id="pl-add" class="btn"><svg><use href="#i-plus"/></svg>Video qoʻshish</button>
+        </div>
+      </div>
+      <div id="pl-items" class="pl-items"></div>
+    </section>
+
     <!-- PLEYER -->
     <section id="view-player" class="view">
       <header class="topbar player-top">
@@ -127,6 +158,11 @@
         <h2 id="player-title"></h2>
         <button id="btn-player-menu" class="icon-btn" aria-label="Menyu"><svg><use href="#i-more"/></svg></button>
       </header>
+      <div id="pl-bar" class="pl-bar hidden">
+        <button id="plb-prev" class="icon-btn" title="Oldingi video"><svg><use href="#i-prev"/></svg></button>
+        <button id="plb-open" class="plb-name"><svg><use href="#i-list"/></svg><span id="plb-text"></span></button>
+        <button id="plb-next" class="icon-btn" title="Keyingi video"><svg><use href="#i-next"/></svg></button>
+      </div>
 
       <div id="stage" class="stage">
         <div class="vbox">
@@ -237,11 +273,49 @@
         <span class="fp-name" id="add-sub-en-name">Tanlanmagan</span>
       </label>
       <label class="field">Nomi<input id="add-title" class="input" type="text" placeholder="Video nomi"></label>
+      <label class="field">Playlistga qoʻshish (ixtiyoriy)
+        <select id="add-playlist" class="input"></select>
+      </label>
+      <input id="add-playlist-new" class="input hidden" type="text" placeholder="Yangi playlist nomi, masalan: Castlevania 1-mavsum">
       <div id="add-status" class="muted small"></div>
       <div class="btn-row end">
         <button class="btn" data-close>Bekor qilish</button>
         <button id="add-save" class="btn primary">Saqlash</button>
       </div>
+    </div>
+  </div>
+
+  <!-- VIDEONI PLAYLISTGA QO'SHISH -->
+  <div id="modal-topl" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head"><h3>Playlistga qoʻshish</h3><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+      <div id="topl-video" class="muted small"></div>
+      <div id="topl-list" class="check-list"></div>
+      <div class="w-save" style="margin-top:12px">
+        <input id="topl-new" class="input" type="text" placeholder="Yangi playlist nomi">
+        <button id="topl-create" class="btn primary"><svg><use href="#i-plus"/></svg>Yaratish</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PLAYLISTGA VIDEOLAR TANLASH -->
+  <div id="modal-plpick" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head"><h3>Videolarni tanlang</h3><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+      <div id="plpick-list" class="check-list"></div>
+      <div class="btn-row end">
+        <button class="btn" data-close>Bekor qilish</button>
+        <button id="plpick-save" class="btn primary">Qoʻshish</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PLEYERDAGI PLAYLIST RO'YXATI -->
+  <div id="modal-plnow" class="modal sheet-wrap hidden" role="dialog" aria-modal="true">
+    <div class="sheet">
+      <div class="sheet-grip"></div>
+      <div class="modal-head"><h3 id="plnow-title"></h3><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+      <div id="plnow-list" class="pl-items compact"></div>
     </div>
   </div>
 

@@ -1,7 +1,7 @@
 // IndexedDB ustidan yupqa qatlam: videolar, fayllar (Blob), lug'at, tarjima keshi va sozlamalar.
 
 const DB_NAME = 'til-player';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // 2 — playlistlar qo'shildi
 
 let dbPromise = null;
 
@@ -19,6 +19,7 @@ function open() {
       }
       if (!db.objectStoreNames.contains('trcache')) db.createObjectStore('trcache');
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings');
+      if (!db.objectStoreNames.contains('playlists')) db.createObjectStore('playlists', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -73,6 +74,29 @@ export async function addVideo(meta, videoBlob) {
 export async function deleteVideo(id) {
   await del('blobs', id);
   await del('videos', id);
+  // o'chirilgan videoni barcha playlistlardan ham olib tashlaymiz
+  for (const pl of await getAll('playlists')) {
+    if (pl.items.includes(id)) {
+      pl.items = pl.items.filter((x) => x !== id);
+      await put('playlists', pl);
+    }
+  }
+}
+
+// --- Playlistlar ---
+
+export async function createPlaylist(name, items = []) {
+  const pl = { id: uid(), name, items, createdAt: Date.now() };
+  await put('playlists', pl);
+  return pl;
+}
+
+export async function updatePlaylist(id, patch) {
+  const pl = await get('playlists', id);
+  if (!pl) return null;
+  Object.assign(pl, patch);
+  await put('playlists', pl);
+  return pl;
 }
 
 export async function updateVideo(id, patch) {
@@ -95,6 +119,7 @@ export const DEFAULT_SETTINGS = {
   listenAutoPause: true,
   listenHideSubs: true,
   autoTranslateLine: false,
+  autoplayNext: true,
 };
 
 export async function loadSettings() {

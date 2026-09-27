@@ -4,7 +4,9 @@ import {
   keepEnglishOnly,
 } from './subtitles.js';
 import { translate, overrideTranslation, googleTranslateLink } from './translate.js';
-import { speak, lockLandscape, VoiceRecorder } from './media.js';
+import {
+  speak, setOrientation, setSystemBarsHidden, VoiceRecorder,
+} from './media.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -16,6 +18,11 @@ const SUB_LABEL = { en: 'EN', 'en+uz': 'EN+UZ', hidden: 'Yashirin', off: 'Oʻchi
 const S = {
   settings: null,
   videos: [],
+  playlists: [],
+  libTab: 'videos',
+  openPlaylistId: null, // ochiq playlist sahifasi
+  pl: null, // pleyerda ijro etilayotgan playlist: { id, index }
+  returnView: 'library',
   vocab: [],
   savedWords: new Set(),
   view: 'library',
@@ -90,9 +97,11 @@ function topModal() {
 function showView(name) {
   S.view = name;
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
-  $$('.bottom-nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+  const navName = name === 'playlist' ? 'library' : name;
+  $$('.bottom-nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === navName));
   document.body.classList.toggle('in-player', name === 'player');
   if (name === 'library') renderLibrary();
+  if (name === 'playlist') renderPlaylistPage();
   if (name === 'vocab') renderVocab();
   if (name === 'settings') renderSettings();
 }
@@ -111,6 +120,7 @@ function handleBack() {
   if (document.body.classList.contains('fs')) { setFullscreen(false); return true; }
   if (S.view === 'player') { closePlayer(); return true; }
   if (S.view !== 'library') { showView('library'); return true; }
+  if (S.libTab !== 'videos') { setLibTab('videos'); return true; }
   return false;
 }
 
@@ -121,6 +131,15 @@ async function loadVideos() {
 }
 
 function renderLibrary() {
+  const onVideos = S.libTab === 'videos';
+  $$('#lib-tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === S.libTab));
+  $('#library-list').classList.toggle('hidden', !onVideos);
+  $('#playlist-list').classList.toggle('hidden', onVideos);
+  if (!onVideos) {
+    $('#library-empty').classList.add('hidden');
+    renderPlaylists();
+    return;
+  }
   const list = $('#library-list');
   $('#library-empty').classList.toggle('hidden', S.videos.length > 0);
   list.innerHTML = S.videos.map((v) => {
@@ -139,6 +158,7 @@ function renderLibrary() {
               ${pct ? `<span class="badge">${pct}%</span>` : ''}
             </div>
           </div>
+          <button class="icon-btn del" data-topl="${v.id}" title="Playlistga qoʻshish"><svg><use href="#i-list-plus"/></svg></button>
           <button class="icon-btn del" data-del="${v.id}" title="Oʻchirish"><svg><use href="#i-trash"/></svg></button>
         </div>
       </div>`;
@@ -146,13 +166,15 @@ function renderLibrary() {
 }
 
 $('#library-list').addEventListener('click', async (e) => {
+  const topl = e.target.closest('[data-topl]');
+  if (topl) { e.stopPropagation(); openToPlaylist(topl.dataset.topl); return; }
   const del = e.target.closest('[data-del]');
   if (del) {
     e.stopPropagation();
     const v = S.videos.find((x) => x.id === del.dataset.del);
     if (v && confirm(`“${v.title}” oʻchirilsinmi?`)) {
       await db.deleteVideo(v.id);
-      await loadVideos();
+      await Promise.all([loadVideos(), loadPlaylists()]);
       renderLibrary();
       toast('Video oʻchirildi');
     }
@@ -161,6 +183,366 @@ $('#library-list').addEventListener('click', async (e) => {
   const card = e.target.closest('.vcard');
   if (card) openPlayer(card.dataset.id);
 });
+
+// ================= Playlistlar =================
+
+const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+
+async function loadPlaylists() {
+  S.playlists = (await db.getAll('playlists')).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function videoById(id) {
+  return S.videos.find((v) => v.id === id);
+}
+
+// Playlistdagi mavjud videolar (o'chirilganlari tashlab ketiladi)
+function plVideos(pl) {
+  return pl ? pl.items.map(videoById).filter(Boolean) : [];
+}
+
+function isFinished(v) {
+  return v.duration && (v.lastTime || 0) >= v.duration - 10;
+}
+
+function setLibTab(tab) {
+  S.libTab = tab;
+  renderLibrary();
+}
+$$('#lib-tabs button').forEach((b) => b.addEventListener('click', () => setLibTab(b.dataset.tab)));
+
+function renderPlaylists() {
+  const cards = S.playlists.map((pl) => {
+    const vids = plVideos(pl);
+    const total = vids.reduce((sum, v) => sum + (v.duration || 0), 0);
+    const done = vids.filter(isFinished).length;
+    const first = vids.find((v) => v.thumb);
+    const thumb = first ? `style="background-image:url('${first.thumb}')"` : '';
+    return `
+      <div class="vcard plcard" data-pl="${pl.id}">
+        <div class="thumb" ${thumb}>
+          ${first ? '' : '<svg><use href="#i-list"/></svg>'}
+          <span class="pl-count"><svg><use href="#i-list"/></svg>${vids.length}</span>
+        </div>
+        <div class="progress"><i style="width:${vids.length ? Math.round((done / vids.length) * 100) : 0}%"></i></div>
+        <div class="info">
+          <div style="flex:1">
+            <div class="title">${esc(pl.name)}</div>
+            <div class="meta">
+              <span class="badge">${vids.length} ta video</span>
+              ${total ? `<span class="badge">${formatTime(total)}</span>` : ''}
+              ${done ? `<span class="badge">${done} tasi koʻrildi</span>` : ''}
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+  $('#playlist-list').innerHTML = `
+    <button class="vcard newpl" id="pl-new">
+      <svg><use href="#i-plus"/></svg>
+      <span>Yangi playlist</span>
+      <small class="muted">Masalan: “Castlevania 1-mavsum”</small>
+    </button>` + cards;
+}
+
+async function createPlaylistPrompt(items = []) {
+  const name = (prompt('Playlist nomi:', '') || '').trim();
+  if (!name) return null;
+  const pl = await db.createPlaylist(name, items);
+  await loadPlaylists();
+  return pl;
+}
+
+$('#playlist-list').addEventListener('click', async (e) => {
+  if (e.target.closest('#pl-new')) {
+    const pl = await createPlaylistPrompt();
+    if (pl) openPlaylistPage(pl.id);
+    return;
+  }
+  const card = e.target.closest('[data-pl]');
+  if (card) openPlaylistPage(card.dataset.pl);
+});
+
+// ---- Playlist sahifasi ----
+
+function openPlaylistPage(id) {
+  S.openPlaylistId = id;
+  showView('playlist');
+}
+
+function currentPagePl() {
+  return S.playlists.find((p) => p.id === S.openPlaylistId);
+}
+
+function renderPlaylistPage() {
+  const pl = currentPagePl();
+  if (!pl) { showView('library'); return; }
+  const vids = plVideos(pl);
+  const total = vids.reduce((sum, v) => sum + (v.duration || 0), 0);
+  $('#pl-title').textContent = pl.name;
+  $('#pl-info').textContent = vids.length
+    ? `${vids.length} ta video · ${formatTime(total)} · ${vids.filter(isFinished).length} tasi koʻrildi`
+    : 'Playlist boʻsh. “Video qoʻshish” tugmasi orqali kutubxonadagi videolarni qoʻshing.';
+  $('#pl-play').disabled = !vids.length;
+  $('#pl-items').innerHTML = vids.map((v, i) => {
+    const pct = v.duration ? Math.min(100, Math.round(((v.lastTime || 0) / v.duration) * 100)) : 0;
+    const thumb = v.thumb ? `style="background-image:url('${v.thumb}')"` : '';
+    return `
+      <div class="pl-item" data-idx="${i}">
+        <span class="pl-num">${isFinished(v) ? '<svg><use href="#i-check"/></svg>' : i + 1}</span>
+        <div class="pl-thumb" ${thumb}><i style="width:${pct}%"></i></div>
+        <div class="pl-meta">
+          <div class="pl-t">${esc(v.title)}</div>
+          <div class="muted small">${v.duration ? formatTime(v.duration) : ''}${pct ? ` · ${pct}%` : ''}${v.subEn ? '' : ' · subtitr yoʻq'}</div>
+        </div>
+        <div class="pl-btns">
+          <button class="icon-btn" data-move="-1" title="Yuqoriga" ${i === 0 ? 'disabled' : ''}><svg><use href="#i-up"/></svg></button>
+          <button class="icon-btn" data-move="1" title="Pastga" ${i === vids.length - 1 ? 'disabled' : ''}><svg><use href="#i-down"/></svg></button>
+          <button class="icon-btn" data-rm title="Playlistdan olib tashlash"><svg><use href="#i-close"/></svg></button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function savePlItems(pl, ids) {
+  pl.items = ids;
+  await db.updatePlaylist(pl.id, { items: ids });
+}
+
+$('#pl-items').addEventListener('click', async (e) => {
+  const pl = currentPagePl();
+  const row = e.target.closest('.pl-item');
+  if (!pl || !row) return;
+  const ids = plVideos(pl).map((v) => v.id);
+  const i = +row.dataset.idx;
+  const move = e.target.closest('[data-move]');
+  if (move) {
+    const j = i + +move.dataset.move;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    await savePlItems(pl, ids);
+    renderPlaylistPage();
+    return;
+  }
+  if (e.target.closest('[data-rm]')) {
+    ids.splice(i, 1);
+    await savePlItems(pl, ids);
+    renderPlaylistPage();
+    toast('Video playlistdan olib tashlandi (kutubxonada qoldi)');
+    return;
+  }
+  playPlaylist(pl.id, i);
+});
+
+$('#pl-back').addEventListener('click', () => { S.libTab = 'playlists'; showView('library'); });
+
+$('#pl-play').addEventListener('click', () => {
+  const pl = currentPagePl();
+  const vids = plVideos(pl);
+  if (!vids.length) return;
+  // birinchi oxirigacha ko'rilmagan videodan boshlaymiz
+  const i = vids.findIndex((v) => !isFinished(v));
+  playPlaylist(pl.id, i === -1 ? 0 : i);
+});
+
+$('#pl-rename').addEventListener('click', async () => {
+  const pl = currentPagePl();
+  if (!pl) return;
+  const name = (prompt('Yangi nom:', pl.name) || '').trim();
+  if (!name) return;
+  await db.updatePlaylist(pl.id, { name });
+  await loadPlaylists();
+  renderPlaylistPage();
+});
+
+$('#pl-delete').addEventListener('click', async () => {
+  const pl = currentPagePl();
+  if (!pl || !confirm(`“${pl.name}” playlisti oʻchirilsinmi?\nVideolar kutubxonada qoladi.`)) return;
+  await db.del('playlists', pl.id);
+  await loadPlaylists();
+  S.libTab = 'playlists';
+  showView('library');
+  toast('Playlist oʻchirildi');
+});
+
+// Playlistga kutubxonadan videolar tanlash
+$('#pl-add').addEventListener('click', () => {
+  const pl = currentPagePl();
+  if (!pl) return;
+  if (!S.videos.length) { toast('Kutubxonada hali video yoʻq'); return; }
+  const inPl = new Set(pl.items);
+  const sorted = [...S.videos].sort((a, b) => natural(a.title, b.title));
+  $('#plpick-list').innerHTML = sorted.map((v) => `
+    <label class="check-row">
+      <input type="checkbox" value="${v.id}" ${inPl.has(v.id) ? 'checked' : ''}>
+      <span>${esc(v.title)}</span>
+      ${v.duration ? `<small class="muted">${formatTime(v.duration)}</small>` : ''}
+    </label>`).join('');
+  openModal('#modal-plpick');
+});
+
+$('#plpick-save').addEventListener('click', async () => {
+  const pl = currentPagePl();
+  if (!pl) return;
+  const checked = new Set($$('#plpick-list input:checked').map((c) => c.value));
+  const kept = pl.items.filter((id) => checked.has(id));
+  const added = S.videos.filter((v) => checked.has(v.id) && !pl.items.includes(v.id))
+    .sort((a, b) => natural(a.title, b.title))
+    .map((v) => v.id);
+  await savePlItems(pl, [...kept, ...added]);
+  closeModal($('#modal-plpick'));
+  renderPlaylistPage();
+});
+
+// ---- Videoni playlistga qo'shish (kutubxonadan) ----
+
+let toplVideoId = null;
+
+function renderToPlaylist() {
+  const v = videoById(toplVideoId);
+  $('#topl-video').textContent = v ? v.title : '';
+  $('#topl-list').innerHTML = S.playlists.length
+    ? S.playlists.map((pl) => `
+      <label class="check-row">
+        <input type="checkbox" value="${pl.id}" ${pl.items.includes(toplVideoId) ? 'checked' : ''}>
+        <span>${esc(pl.name)}</span>
+        <small class="muted">${plVideos(pl).length} ta</small>
+      </label>`).join('')
+    : '<p class="muted small">Hali playlist yoʻq — pastda yangisini yarating.</p>';
+}
+
+function openToPlaylist(videoId) {
+  toplVideoId = videoId;
+  $('#topl-new').value = '';
+  renderToPlaylist();
+  openModal('#modal-topl');
+}
+
+$('#topl-list').addEventListener('change', async (e) => {
+  const pl = S.playlists.find((p) => p.id === e.target.value);
+  if (!pl) return;
+  const items = e.target.checked
+    ? [...pl.items.filter((id) => id !== toplVideoId), toplVideoId]
+    : pl.items.filter((id) => id !== toplVideoId);
+  await savePlItems(pl, items);
+  toast(e.target.checked ? `“${pl.name}” ga qoʻshildi` : `“${pl.name}” dan olib tashlandi`, 1600);
+});
+
+$('#topl-create').addEventListener('click', async () => {
+  const name = $('#topl-new').value.trim();
+  if (!name) { $('#topl-new').focus(); return; }
+  await db.createPlaylist(name, [toplVideoId]);
+  await loadPlaylists();
+  $('#topl-new').value = '';
+  renderToPlaylist();
+  toast(`“${name}” playlisti yaratildi`);
+});
+
+// ---- Video qo'shish oynasidagi playlist tanlovi ----
+
+function fillPlaylistSelect() {
+  const sel = $('#add-playlist');
+  sel.innerHTML = '<option value="">— Qoʻshilmasin —</option>'
+    + S.playlists.map((pl) => `<option value="${pl.id}">${esc(pl.name)}</option>`).join('')
+    + '<option value="__new">+ Yangi playlist…</option>';
+  // oxirgi marta tanlangan playlistni eslab qolamiz — qismlarni ketma-ket qo'shish qulay bo'lsin
+  if (S.lastPlaylistId && S.playlists.some((p) => p.id === S.lastPlaylistId)) sel.value = S.lastPlaylistId;
+  $('#add-playlist-new').classList.toggle('hidden', sel.value !== '__new');
+}
+$('#add-playlist').addEventListener('change', (e) => {
+  $('#add-playlist-new').classList.toggle('hidden', e.target.value !== '__new');
+  if (e.target.value === '__new') $('#add-playlist-new').focus();
+});
+
+// ---- Pleyerda playlist ----
+
+function playPlaylist(plId, index, autoplay = false) {
+  const pl = S.playlists.find((p) => p.id === plId);
+  const vids = plVideos(pl);
+  if (!vids[index]) return;
+  const v = vids[index];
+  // qayta ko'rilayotgan (oxirigacha ko'rilgan) video boshidan boshlanadi
+  openPlayer(v.id, isFinished(v) ? 0 : null, { playlist: { id: plId, index }, autoplay });
+}
+
+function renderPlBar() {
+  const bar = $('#pl-bar');
+  const pl = S.pl && S.playlists.find((p) => p.id === S.pl.id);
+  bar.classList.toggle('hidden', !pl);
+  if (!pl) return;
+  const n = plVideos(pl).length;
+  $('#plb-text').textContent = `${pl.name} · ${S.pl.index + 1}/${n}`;
+  $('#plb-prev').disabled = S.pl.index <= 0;
+  $('#plb-next').disabled = S.pl.index >= n - 1;
+}
+
+$('#plb-prev').addEventListener('click', () => {
+  if (S.pl && S.pl.index > 0) playPlaylist(S.pl.id, S.pl.index - 1, true);
+});
+$('#plb-next').addEventListener('click', () => {
+  if (S.pl) playPlaylist(S.pl.id, S.pl.index + 1, true);
+});
+
+$('#plb-open').addEventListener('click', () => {
+  const pl = S.pl && S.playlists.find((p) => p.id === S.pl.id);
+  if (!pl) return;
+  $('#plnow-title').textContent = pl.name;
+  $('#plnow-list').innerHTML = plVideos(pl).map((v, i) => `
+    <div class="pl-item${i === S.pl.index ? ' current' : ''}" data-idx="${i}">
+      <span class="pl-num">${i === S.pl.index ? '<svg><use href="#i-play"/></svg>' : isFinished(v) ? '<svg><use href="#i-check"/></svg>' : i + 1}</span>
+      <div class="pl-meta">
+        <div class="pl-t">${esc(v.title)}</div>
+        <div class="muted small">${v.duration ? formatTime(v.duration) : ''}</div>
+      </div>
+    </div>`).join('');
+  openModal('#modal-plnow');
+});
+
+$('#plnow-list').addEventListener('click', (e) => {
+  const row = e.target.closest('.pl-item');
+  if (!row || !S.pl) return;
+  closeModal($('#modal-plnow'));
+  const i = +row.dataset.idx;
+  if (i !== S.pl.index) playPlaylist(S.pl.id, i, true);
+});
+
+// Video tugagach — 5 soniyadan keyin keyingisi (ustiga bosib bekor qilish mumkin)
+let nextTimer = null;
+
+function cancelAutoNext() {
+  if (!nextTimer) return;
+  clearInterval(nextTimer);
+  nextTimer = null;
+  clearStatus();
+}
+
+function scheduleAutoNext() {
+  const pl = S.playlists.find((p) => p.id === S.pl.id);
+  const vids = plVideos(pl);
+  const nextIdx = S.pl.index + 1;
+  if (nextIdx >= vids.length) { toast('Playlist tugadi 🎉'); return; }
+  let left = 5;
+  const tickNext = () => {
+    if (left <= 0) {
+      cancelAutoNext();
+      playPlaylist(pl.id, nextIdx, true);
+      return;
+    }
+    setStatus(`<svg><use href="#i-next"/></svg>Keyingi: ${esc(vids[nextIdx].title)} · ${left} <u>Bekor qilish</u>`, 0);
+    left--;
+  };
+  cancelAutoNext();
+  tickNext();
+  nextTimer = setInterval(tickNext, 1000);
+}
+
+$('#stage-status').addEventListener('click', (e) => {
+  if (!nextTimer) return;
+  e.stopPropagation();
+  cancelAutoNext();
+  toast('Keyingi videoga oʻtish bekor qilindi', 1600);
+});
+video.addEventListener('play', cancelAutoNext);
 
 // ---- Video qo'shish ----
 
@@ -173,6 +555,7 @@ function resetAddForm() {
   $('#add-sub-en-name').textContent = 'Tanlanmagan';
   $('#add-title').value = '';
   $('#add-status').textContent = '';
+  fillPlaylistSelect();
   $('#add-save').disabled = false;
 }
 
@@ -265,7 +648,17 @@ $('#add-save').addEventListener('click', async () => {
       createdAt: Date.now(),
     };
     await db.addVideo(meta, addForm.video);
-    await loadVideos();
+    const plChoice = $('#add-playlist').value;
+    if (plChoice === '__new') {
+      const name = $('#add-playlist-new').value.trim() || 'Yangi playlist';
+      const pl = await db.createPlaylist(name, [meta.id]);
+      S.lastPlaylistId = pl.id;
+    } else if (plChoice) {
+      const pl = S.playlists.find((p) => p.id === plChoice);
+      if (pl) await db.updatePlaylist(pl.id, { items: [...pl.items, meta.id] });
+      S.lastPlaylistId = plChoice;
+    }
+    await Promise.all([loadVideos(), loadPlaylists()]);
     closeModal($('#modal-add'));
     renderLibrary();
     toast(meta.subEn ? 'Video saqlandi' : 'Video saqlandi. Subtitrni keyinroq pleyer menyusidan qoʻshishingiz mumkin', 3500);
@@ -279,7 +672,12 @@ $('#add-save').addEventListener('click', async () => {
 
 // ================= Pleyer =================
 
-async function openPlayer(id, atTime) {
+// opts.playlist — { id, index }: playlist ichidan ochilganda; opts.autoplay — darhol ijro
+async function openPlayer(id, atTime, opts = {}) {
+  cancelAutoNext();
+  if (S.cur && S.cur.id !== id) await saveProgress(true);
+  if (S.view !== 'player') S.returnView = S.view;
+  S.pl = opts.playlist || null;
   const meta = await db.get('videos', id);
   if (!meta) { toast('Video topilmadi'); return; }
   const blob = await db.get('blobs', id);
@@ -311,20 +709,23 @@ async function openPlayer(id, atTime) {
     video.removeEventListener('loadedmetadata', once);
     if (start) video.currentTime = start;
     tick(true);
+    if (opts.autoplay) video.play().catch(() => {});
   });
 
   db.updateVideo(id, { openedAt: Date.now() });
   setMode('watch');
   renderTranscript();
   updateLoopBtn();
+  renderPlBar();
   showView('player');
   updatePlayBtn();
 }
 
 async function closePlayer() {
+  cancelAutoNext();
   video.pause();
   await saveProgress(true);
-  setFullscreen(false);
+  setFullscreen(false, { leavingPlayer: true });
   resetShadow();
   if (recorder.recording) await recorder.stop();
   recorder.release();
@@ -332,8 +733,9 @@ async function closePlayer() {
   video.load();
   if (S.objectUrl) { URL.revokeObjectURL(S.objectUrl); S.objectUrl = null; }
   S.cur = null;
+  S.pl = null;
   await loadVideos();
-  showView('library');
+  showView(S.returnView === 'player' ? 'library' : S.returnView || 'library');
 }
 
 $('#btn-back').addEventListener('click', closePlayer);
@@ -398,7 +800,11 @@ video.addEventListener('pause', () => { updatePlayBtn(); saveProgress(true); sho
 video.addEventListener('timeupdate', () => { if (video.paused) tick(); saveProgress(false); });
 video.addEventListener('seeked', () => tick());
 video.addEventListener('durationchange', updateTime);
-video.addEventListener('ended', () => { updatePlayBtn(); saveProgress(true); });
+video.addEventListener('ended', () => {
+  updatePlayBtn();
+  saveProgress(true);
+  if (S.pl && S.settings.autoplayNext) scheduleAutoNext();
+});
 video.addEventListener('error', () => {
   if (!S.cur) return;
   toast('Bu videoni qurilma oʻynata olmadi. MP4 (H.264/AAC) formatidagi video tavsiya etiladi.', 6000);
@@ -677,23 +1083,26 @@ video.addEventListener('click', () => {
 
 // ---- To'liq ekran ----
 
-async function setFullscreen(on) {
+// Hamma narsa sinxron bajariladi: avval interfeys, keyin tizim panellari va ekran yo'nalishi.
+// (Oldin brauzer fullscreen va'dasini kutib qolib, kichraytirish ishlamay qolardi.)
+function setFullscreen(on, { leavingPlayer = false } = {}) {
   const isOn = document.body.classList.contains('fs');
-  if (on === isOn) return;
-  document.body.classList.toggle('fs', on);
-  $('#c-fs use').setAttribute('href', on ? '#i-fs-exit' : '#i-fs');
-  $('#stage').classList.toggle('with-controls', on);
-  try {
-    if (on && document.documentElement.requestFullscreen && !document.fullscreenElement) {
-      await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-    } else if (!on && document.fullscreenElement) {
-      await document.exitFullscreen();
-    }
-  } catch (_) { /* WebView'da har doim ham ishlamaydi — CSS rejimi yetarli */ }
-  lockLandscape(on);
+  if (on !== isOn) {
+    document.body.classList.toggle('fs', on);
+    $('#c-fs use').setAttribute('href', on ? '#i-fs-exit' : '#i-fs');
+    $('#c-fs').title = on ? 'Kichik ekran' : 'Toʻliq ekran';
+    $('#stage').classList.toggle('with-controls', on);
+    setSystemBarsHidden(on);
+  }
+  // To'liq ekranda — yotiq, pleyerda — tik, pleyerdan chiqqach — erkin
+  setOrientation(on ? 'landscape' : (leavingPlayer ? null : 'portrait'));
   showControls();
 }
-$('#c-fs').addEventListener('click', () => setFullscreen(!document.body.classList.contains('fs')));
+$('#c-fs').addEventListener('click', (e) => {
+  e.stopPropagation();
+  setFullscreen(!document.body.classList.contains('fs'));
+});
+// Brauzerda Esc bilan chiqilganda interfeysni ham qaytaramiz
 document.addEventListener('fullscreenchange', () => {
   if (!document.fullscreenElement && document.body.classList.contains('fs')) setFullscreen(false);
 });
@@ -1263,6 +1672,7 @@ async function renderSettings() {
   $('#set-speed').value = String(s.defaultSpeed);
   $('#set-pause-tap').checked = s.pauseOnWordTap;
   $('#set-autotr').checked = s.autoTranslateLine;
+  $('#set-autonext').checked = s.autoplayNext;
   $('#set-listen-pause').checked = s.listenAutoPause;
   $('#set-listen-hide').checked = s.listenHideSubs;
   $('#set-sh-rep').value = String(s.shadowRepeats);
@@ -1293,6 +1703,7 @@ bindSetting('#set-font', 'fontSize', (el) => +el.value, 'input');
 bindSetting('#set-speed', 'defaultSpeed', (el) => +el.value);
 bindSetting('#set-pause-tap', 'pauseOnWordTap', (el) => el.checked);
 bindSetting('#set-autotr', 'autoTranslateLine', (el) => el.checked);
+bindSetting('#set-autonext', 'autoplayNext', (el) => el.checked);
 bindSetting('#set-listen-pause', 'listenAutoPause', (el) => el.checked);
 bindSetting('#set-listen-hide', 'listenHideSubs', (el) => el.checked);
 bindSetting('#set-sh-rep', 'shadowRepeats', (el) => +el.value);
@@ -1328,7 +1739,7 @@ async function init() {
   S.settings = await db.loadSettings();
   applySettings();
   db.requestPersistence();
-  await Promise.all([loadVideos(), loadVocab()]);
+  await Promise.all([loadVideos(), loadVocab(), loadPlaylists()]);
   showView('library');
 
   // Android "orqaga" tugmasi

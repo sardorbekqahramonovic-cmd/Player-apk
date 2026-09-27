@@ -28,17 +28,38 @@ export async function speak(text, rate = 0.9) {
   throw new Error('Qurilmada talaffuz (TTS) mavjud emas');
 }
 
-export async function lockLandscape(on) {
+// Ekran yo'nalishi: 'landscape', 'portrait' yoki null (telefon o'zi aylantiradi).
+export function setOrientation(mode) {
   const so = nativePlugin('ScreenOrientation');
+  const done = (p) => { if (p && p.catch) p.catch(() => {}); };
   try {
-    if (so) {
-      if (on) await so.lock({ orientation: 'landscape' });
-      else await so.unlock();
-    } else if (screen.orientation && screen.orientation.lock) {
-      if (on) await screen.orientation.lock('landscape');
+    if (so) done(mode ? so.lock({ orientation: mode }) : so.unlock());
+    else if (screen.orientation && screen.orientation.lock) {
+      if (mode) done(screen.orientation.lock(mode));
       else screen.orientation.unlock();
     }
   } catch (_) { /* hamma qurilmalarda ham ishlamaydi */ }
+}
+
+// Tizim panellarini (soat, navigatsiya tugmalari) yashirish yoki qaytarish.
+// Ilovada — o'zimizning Immersive plagini, brauzerda — Fullscreen API.
+// Hech qachon kutib qolmaymiz: ba'zi WebView'larda bu va'dalar hech qachon tugamaydi.
+export function setSystemBarsHidden(hidden) {
+  const im = nativePlugin('Immersive');
+  try {
+    if (im) {
+      const p = hidden ? im.enter() : im.exit();
+      if (p && p.catch) p.catch(() => {});
+      return;
+    }
+    if (hidden && document.documentElement.requestFullscreen && !document.fullscreenElement) {
+      const p = document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      if (p && p.catch) p.catch(() => {});
+    } else if (!hidden && document.fullscreenElement && document.exitFullscreen) {
+      const p = document.exitFullscreen();
+      if (p && p.catch) p.catch(() => {});
+    }
+  } catch (_) { /* e'tiborsiz */ }
 }
 
 export class VoiceRecorder {

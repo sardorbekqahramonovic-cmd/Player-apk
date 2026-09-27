@@ -11,6 +11,7 @@ Inglizcha video va subtitr (SRT/VTT) bilan ishlaydigan Android pleyer. Listening
 - **Listening** — subtitr yashiriladi, har gapdan keyin video toʻxtaydi. Qayta eshitish, diktant yozish va tekshirish.
 - **Shadowing** — har gapdan keyin gap uzunligiga mos pauza beriladi; har bir gapni 1–5 marta takrorlash, oʻz ovozingizni yozib, asl talaffuz bilan solishtirish.
 - Tezlik (0.5×–1.5×), gapni aylantirib takrorlash, oldingi/keyingi gapga oʻtish, subtitr sinxronini sozlash, toʻliq ekran.
+- **Playlistlar** — videolarni (masalan, serial qismlarini) playlistga yigʻish, tartibini oʻzgartirish, ketma-ket koʻrish. Video tugagach keyingisi 5 soniyadan keyin avtomatik boshlanadi; pleyerda oldingi/keyingi video tugmalari bor.
 - Faqat inglizcha subtitr yuklanadi. Agar faylda har bir inglizcha qator ostida oʻzbekcha tarjima ham boʻlsa, ilova oʻzbekcha qatorlarni olib tashlab, faqat inglizchasini qoldiradi.
 
 Tarjima Google Translate (zaxira: MyMemory) orqali olinadi va qurilmada keshlanadi — bir marta tarjima qilingan soʻz keyin internetsiz ham ochiladi.

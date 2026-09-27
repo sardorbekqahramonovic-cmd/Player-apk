@@ -130,6 +130,68 @@ body.in-player .bottom-nav { display: none; }
 .vcard .meta { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .vcard .del { color: var(--muted); }
 
+/* ---------- Playlistlar ---------- */
+.seg { display: flex; gap: 6px; padding: 0 16px 12px; }
+.seg button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 0; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg2); color: var(--muted); font-weight: 700; font-size: 14px;
+}
+.seg button svg { width: 18px; height: 18px; }
+.seg button.active { background: var(--bg3); color: var(--text); border-color: var(--accent); }
+.vcard .thumb { position: relative; }
+.pl-count {
+  position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px;
+  background: rgba(0,0,0,0.75); color: #fff; font-weight: 700; font-size: 13px; padding: 3px 8px; border-radius: 8px;
+}
+.vcard .thumb .pl-count svg { width: 16px; height: 16px; opacity: 1; }
+.vcard.newpl {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 150px; border-style: dashed; color: var(--accent2); font-weight: 700; font-size: 15px;
+}
+.vcard.newpl svg { width: 32px; height: 32px; }
+.vcard.newpl small { font-weight: 400; font-size: 12px; }
+.pl-items { padding: 0 12px 24px; display: flex; flex-direction: column; gap: 6px; }
+.pl-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 12px;
+  background: var(--bg2); border: 1px solid var(--line); cursor: pointer;
+}
+.pl-item.current { border-color: var(--accent); }
+.pl-num { width: 24px; text-align: center; color: var(--muted); font-weight: 700; font-size: 13px; flex: none; }
+.pl-num svg { width: 18px; height: 18px; color: var(--good); }
+.pl-item.current .pl-num svg { color: var(--accent2); }
+.pl-thumb {
+  width: 88px; aspect-ratio: 16/9; border-radius: 8px; background: #000 center/cover no-repeat;
+  flex: none; position: relative; overflow: hidden;
+}
+.pl-thumb i { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+.pl-meta { flex: 1; min-width: 0; }
+.pl-t { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pl-btns { display: flex; flex: none; }
+.pl-btns .icon-btn { width: 34px; height: 34px; }
+.pl-btns .icon-btn:disabled { opacity: 0.3; }
+.pl-items.compact { padding: 8px 0 0; }
+.pl-bar {
+  display: flex; align-items: center; gap: 4px; padding: 2px 8px 6px; flex: none;
+}
+.pl-bar .icon-btn { width: 36px; height: 36px; }
+.pl-bar .icon-btn:disabled { opacity: 0.3; }
+.plb-name {
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px;
+  font-size: 13px; font-weight: 600; color: var(--accent2);
+}
+.plb-name svg { width: 16px; height: 16px; }
+.plb-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-list { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; max-height: 50vh; overflow-y: auto; }
+.check-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 10px; background: var(--bg3); cursor: pointer;
+}
+.check-row input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+.check-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#add-playlist-new { margin-top: 8px; }
+.stage-status u { margin-left: 6px; color: var(--accent2); }
+
 /* ---------- Pleyer ---------- */
 .stage { position: relative; background: #000; flex: none; user-select: none; -webkit-user-select: none; }
 .vbox { position: relative; }
@@ -178,6 +240,7 @@ body.in-player .bottom-nav { display: none; }
 
 /* To'liq ekran rejimi */
 body.fs #view-player .player-top,
+body.fs #view-player .pl-bar,
 body.fs #view-player .mode-tabs,
 body.fs #view-player .mode-panel,
 body.fs #view-player .transcript-head,
@@ -332,15 +395,16 @@ body.fs { --sub-size: calc(var(--sub-base, 20px) * 1.25); }
 @media (min-width: 900px) {
   #view-player.active {
     display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr);
-    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
   }
   #view-player .player-top { grid-column: 1 / 3; grid-row: 1; }
-  #view-player .stage { grid-column: 1; grid-row: 2 / 6; align-self: start; }
+  #view-player .pl-bar { grid-column: 1 / 3; grid-row: 2; }
+  #view-player .stage { grid-column: 1; grid-row: 3 / 7; align-self: start; }
   #view-player .stage video { max-height: 72vh; }
-  #view-player .mode-tabs { grid-column: 2; grid-row: 2; }
-  #view-player .mode-panel { grid-column: 2; grid-row: 3; }
-  #view-player .transcript-head { grid-column: 2; grid-row: 4; }
-  #view-player .transcript { grid-column: 2; grid-row: 5; }
+  #view-player .mode-tabs { grid-column: 2; grid-row: 3; }
+  #view-player .mode-panel { grid-column: 2; grid-row: 4; }
+  #view-player .transcript-head { grid-column: 2; grid-row: 5; }
+  #view-player .transcript { grid-column: 2; grid-row: 6; }
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
