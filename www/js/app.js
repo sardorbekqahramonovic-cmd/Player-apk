@@ -1689,10 +1689,28 @@ $('#gen-cancel').addEventListener('click', async () => {
   genJob.cancelled = true;
   $('#gen-text').textContent = 'Toʻxtatilmoqda…';
   await autosub.cancel().catch(() => {});
+  // ilovaning o'zidagi bosqichlarda (model yuklash, video uzatish) runGeneration o'zi yakunlaydi
+  if (genJob && genJob.local) return;
+  setPendingGen(null);
+  // xizmat "cancelled" hodisasini yubormasa ham (masalan, u to'xtab turgan bo'lsa) panel yopilsin
+  setTimeout(() => syncGen(false), 1200);
 });
 
+// Ish ilova ichida boshlanadi (model yuklash, video uzatish), keyin Android xizmatiga o'tadi.
+// Xizmat ilova yopilsa ham ishlaydi; holat diskda — ilova qayta ochilganda syncGen() davom ettiradi.
+function setPendingGen(p) {
+  S.settings.pendingGen = p;
+  db.saveSettings(S.settings);
+}
+
+function jobStage(stage) {
+  return stage === 'decode' ? 'audio' : stage === 'asr' ? 'asr' : stage;
+}
+
 async function runGeneration(videoId, title, lang, model) {
-  genJob = { videoId, title, cancelled: false, stage: 'upload', percent: 0 };
+  // ilova jarayoni shu bosqichlarda to'xtatilsa, qayta ochilganda qaytadan boshlash uchun eslab qolamiz
+  setPendingGen({ videoId, title, lang, model });
+  genJob = { videoId, title, cancelled: false, stage: 'upload', percent: 0, local: true };
   showGen();
   const isCancelled = () => !genJob || genJob.cancelled;
   try {
@@ -1710,12 +1728,45 @@ async function runGeneration(videoId, title, lang, model) {
     if (!blob) throw new Error('Video fayli topilmadi');
     setGenStage('upload', 0);
     await autosub.uploadVideo(blob, (p) => setGenStage('upload', p), isCancelled);
+    if (isCancelled()) throw Object.assign(new Error('cancelled'), { code: 'CANCELLED' });
 
+    await autosub.start({ videoId, title, model, language: lang });
+    // bundan keyin ish xizmatda — natija "done" hodisasi yoki syncGen() orqali keladi
+    setPendingGen(null);
+    genJob.local = false;
     setGenStage('audio', 0);
-    const cues = await autosub.transcribe({ model, language: lang }, (stage, p) => setGenStage(stage, p));
-    if (!cues.length) throw new Error('Videoda nutq topilmadi.');
+  } catch (err) {
+    setPendingGen(null);
+    genJob = null;
+    showGen();
+    if (err && (err.code === 'CANCELLED' || err.message === 'cancelled')) toast('Avtomatik subtitr toʻxtatildi');
+    else toast('Subtitr yaratib boʻlmadi: ' + ((err && err.message) || err), 7000);
+  }
+}
 
-    await db.updateVideo(videoId, { subEn: cues, lang, offset: 0, subAuto: true });
+let finalizing = false;
+
+// Tugagan ishning natijasini videoga saqlaydi (bir necha marta chaqirilsa ham bir marta ishlaydi)
+async function finalizeGen() {
+  if (finalizing) return;
+  finalizing = true;
+  try {
+    const res = await autosub.takeResult();
+    if (!res) return;
+    const { videoId, cues } = res;
+    const lang = res.language || 'en';
+    const title = res.title || (genJob && genJob.title) || '';
+    genJob = null;
+    showGen();
+    if (!cues.length) {
+      toast(`Videoda nutq topilmadi — “${title}”`, 5000);
+      return;
+    }
+    const saved = await db.updateVideo(videoId, { subEn: cues, lang, offset: 0, subAuto: true });
+    if (!saved) {
+      toast('Subtitr tayyor edi, lekin video kutubxonadan oʻchirilgan', 5000);
+      return;
+    }
     await loadVideos();
     if (S.cur && S.cur.id === videoId) {
       S.cues = cues;
@@ -1729,12 +1780,76 @@ async function runGeneration(videoId, title, lang, model) {
     if (S.view === 'library') renderLibrary();
     toast(`Subtitr tayyor: ${cues.length} ta gap — “${title}”`, 5000);
   } catch (err) {
-    if (err && (err.code === 'CANCELLED' || err.message === 'cancelled')) toast('Avtomatik subtitr toʻxtatildi');
-    else toast('Subtitr yaratib boʻlmadi: ' + ((err && err.message) || err), 7000);
+    toast('Natijani saqlab boʻlmadi: ' + ((err && err.message) || err), 6000);
   } finally {
-    genJob = null;
-    showGen();
+    finalizing = false;
   }
+}
+
+async function failGen(message) {
+  genJob = null;
+  showGen();
+  setPendingGen(null);
+  await autosub.discard().catch(() => {});
+  toast('Subtitr yaratib boʻlmadi: ' + message, 7000);
+}
+
+// Ilova ochilganda yoki qaytib kelganda: xizmatdagi ish bilan interfeysni moslashtirish
+let syncing = false;
+async function syncGen(onStartup) {
+  if (!autosub.isAvailable() || syncing) return;
+  syncing = true;
+  try {
+    const { job } = await autosub.status();
+    if (!job) {
+      // ilova model yuklash / video uzatish paytida to'xtatilgan bo'lsa — qaytadan boshlaymiz
+      const p = S.settings.pendingGen;
+      if (onStartup && p && !genJob && S.videos.some((v) => v.id === p.videoId)) {
+        toast('Toʻxtab qolgan avtomatik subtitr qaytadan boshlandi', 4000);
+        runGeneration(p.videoId, p.title, p.lang, p.model);
+      } else if (genJob && !genJob.local) {
+        genJob = null;
+        showGen();
+      }
+      return;
+    }
+    if (job.stage === 'done') { await finalizeGen(); return; }
+    if (job.stage === 'error') { await failGen(job.error || 'nomaʼlum xato'); return; }
+    if (!genJob || genJob.videoId !== job.videoId || genJob.local) {
+      genJob = { videoId: job.videoId, title: job.title, cancelled: false, local: false };
+    }
+    setGenStage(jobStage(job.stage), job.percent || 0);
+    if (!job.running && job.canResume) {
+      await autosub.resume();
+      toast('Avtomatik subtitr toʻxtagan joyidan davom ettirildi', 4000);
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    syncing = false;
+  }
+}
+
+function initGenEvents() {
+  if (!autosub.isAvailable()) return;
+  autosub.onEvents({
+    progress: (e) => {
+      if (genJob && genJob.local) return; // ilova ichidagi bosqich (video uzatish) hali tugamagan
+      if (!genJob) { syncGen(false); return; } // interfeys ish haqida bilmaydi (ilova qayta ochilgan)
+      setGenStage(jobStage(e.stage), e.percent);
+    },
+    done: () => finalizeGen(),
+    error: (e) => failGen((e && e.message) || 'nomaʼlum xato'),
+    cancelled: () => {
+      genJob = null;
+      showGen();
+      setPendingGen(null);
+      toast('Avtomatik subtitr toʻxtatildi');
+    },
+    // tizim xizmatni to'xtatdi — ilova oldinda bo'lsa, darhol davom ettiramiz
+    paused: () => setTimeout(() => { if (!document.hidden) syncGen(false); }, 1500),
+  });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncGen(false); });
 }
 
 // ================= Lug'at =================
@@ -1938,6 +2053,8 @@ async function init() {
   db.requestPersistence();
   await Promise.all([loadVideos(), loadVocab(), loadPlaylists()]);
   showView('library');
+  initGenEvents();
+  syncGen(true);
 
   // Android "orqaga" tugmasi
   const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
@@ -1946,6 +2063,7 @@ async function init() {
       if (!handleBack()) App.exitApp();
     });
     App.addListener('pause', () => { if (S.cur) saveProgress(true); });
+    App.addListener('resume', () => syncGen(false));
   }
   window.addEventListener('pagehide', () => { if (S.cur) saveProgress(true); });
 }

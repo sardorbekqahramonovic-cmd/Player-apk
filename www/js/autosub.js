@@ -93,12 +93,40 @@ export async function uploadVideo(blob, onProgress, isCancelled) {
   }
 }
 
-// onProgress(stage, percent): stage — 'audio' (ovoz ajratish) yoki 'asr' (nutqni tanish)
-export async function transcribe({ model, language }, onProgress) {
+// Ishni oldingi plandagi xizmatda boshlaydi (video uploadVideo bilan uzatilgan bo'lishi kerak).
+// Natija "done" hodisasi yoki status() orqali keladi — ilova yopilib qolsa ham yo'qolmaydi.
+export async function start({ videoId, title, model, language }) {
+  await plugin().start({ videoId, title, model, language });
+}
+
+// { job: null } yoki { job: { videoId, title, stage, percent, running, canResume, error } }
+export async function status() {
   const p = plugin();
-  const res = await withListener('progress', (e) => onProgress && onProgress(e.stage, e.percent),
-    () => p.transcribe({ model, language }));
-  return segmentsToCues(res.segments || []);
+  if (!p) return { job: null };
+  return p.status();
+}
+
+export async function resume() {
+  return plugin().resume();
+}
+
+// Tugagan ish natijasi: { videoId, language, cues } yoki null
+export async function takeResult() {
+  const r = await plugin().takeResult();
+  if (!r || !r.videoId) return null;
+  return { videoId: r.videoId, title: r.title, language: r.language, cues: segmentsToCues(r.segments || []) };
+}
+
+export async function discard() {
+  const p = plugin();
+  if (p) await p.discard();
+}
+
+// Xizmat hodisalari: progress { stage, percent }, done, error { message }, paused, cancelled
+export async function onEvents(handlers) {
+  const p = plugin();
+  if (!p) return;
+  for (const [event, cb] of Object.entries(handlers)) await p.addListener(event, cb);
 }
 
 export async function cancel() {

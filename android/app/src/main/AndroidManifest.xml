@@ -24,6 +24,12 @@
 
         </activity>
 
+        <!-- Avtomatik subtitr: ilova fonda bo'lsa ham ishlaydi -->
+        <service
+            android:name=".WhisperService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|mediaProcessing" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -42,4 +48,10 @@
     <!-- Shadowing: o'z ovozingizni yozib olish uchun -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Avtomatik subtitr: oldingi plandagi xizmat, ekran o'chsa ham ishlash, jarayon bildirishnomasi -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
