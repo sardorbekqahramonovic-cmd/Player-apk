@@ -1,0 +1,13 @@
+{
+  "appId": "uz.tilplayer.app",
+  "appName": "Til Player",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

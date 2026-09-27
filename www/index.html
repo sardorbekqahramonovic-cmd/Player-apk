@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0f1115">
+  <title>Til Player</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Ikonkalar -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4.5" width="4" height="15" rx="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-back5" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3.5v5h5"/><text x="12" y="15.5" font-size="7.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="700">5</text></symbol>
+    <symbol id="i-fwd5" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3.5v5h-5"/><text x="12" y="15.5" font-size="7.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="700">5</text></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path d="M18 5v14L8 12z" fill="currentColor"/><path d="M6 5v14"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="M6 5v14l10-7z" fill="currentColor"/><path d="M18 5v14"/></symbol>
+    <symbol id="i-replay" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3.5v5h5"/><path d="M10 9v6l5-3z" fill="currentColor"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></symbol>
+    <symbol id="i-cc" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M10.5 10.2a2.3 2.3 0 1 0 0 3.6M17.5 10.2a2.3 2.3 0 1 0 0 3.6"/></symbol>
+    <symbol id="i-fs" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+    <symbol id="i-fs-exit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
+    <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="19" r="1.6" fill="currentColor"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5M8 7h8"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/></symbol>
+    <symbol id="i-cards" viewBox="0 0 24 24"><rect x="6" y="3" width="13" height="17" rx="2"/><path d="M4 7v12a2 2 0 0 0 2 2h9"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  </svg>
+
+  <div id="app">
+    <!-- KUTUBXONA -->
+    <section id="view-library" class="view active">
+      <header class="topbar">
+        <h1>Til Player</h1>
+        <button id="btn-add" class="btn primary"><svg><use href="#i-plus"/></svg>Video qoʻshish</button>
+      </header>
+      <div id="library-list" class="library"></div>
+      <div id="library-empty" class="empty hidden">
+        <svg class="empty-ic"><use href="#i-film"/></svg>
+        <p><b>Hali video yoʻq.</b></p>
+        <p>Inglizcha video va uning subtitr faylini (.srt yoki .vtt) qoʻshing. Video ilovada saqlanadi — keyin istalgan payt davom ettirasiz.</p>
+        <button class="btn primary" data-action="add"><svg><use href="#i-plus"/></svg>Birinchi videoni qoʻshish</button>
+      </div>
+    </section>
+
+    <!-- LUG'AT -->
+    <section id="view-vocab" class="view">
+      <header class="topbar">
+        <h1>Lugʻatim</h1>
+        <button id="btn-review" class="btn primary"><svg><use href="#i-cards"/></svg>Takrorlash</button>
+      </header>
+      <div class="pad">
+        <input id="vocab-search" class="input" type="search" placeholder="Soʻz yoki tarjimani qidirish…">
+        <div id="vocab-stats" class="muted small"></div>
+      </div>
+      <div id="vocab-list" class="vocab-list"></div>
+      <div id="vocab-empty" class="empty hidden">
+        <svg class="empty-ic"><use href="#i-book"/></svg>
+        <p>Lugʻat boʻsh. Video koʻrayotganda subtitrdagi soʻzni bosing va <b>“Lugʻatga saqlash”</b> tugmasini tanlang.</p>
+      </div>
+    </section>
+
+    <!-- SOZLAMALAR -->
+    <section id="view-settings" class="view">
+      <header class="topbar"><h1>Sozlamalar</h1></header>
+      <div class="pad settings">
+        <h3>Subtitr</h3>
+        <label class="row">Shrift oʻlchami <span><input id="set-font" type="range" min="14" max="36" step="1"> <b id="set-font-val"></b></span></label>
+        <label class="row">Standart tezlik
+          <select id="set-speed" class="select">
+            <option value="0.5">0.5×</option><option value="0.6">0.6×</option><option value="0.75">0.75×</option>
+            <option value="0.85">0.85×</option><option value="1">1×</option><option value="1.25">1.25×</option>
+          </select>
+        </label>
+        <label class="row">Soʻz bosilganda videoni toʻxtatish <input id="set-pause-tap" type="checkbox" class="switch"></label>
+        <label class="row">Subtitr ostida oʻzbekcha tarjimani avtomatik koʻrsatish (internet kerak) <input id="set-autotr" type="checkbox" class="switch"></label>
+
+        <h3>Listening</h3>
+        <label class="row">Har bir gapdan keyin toʻxtash <input id="set-listen-pause" type="checkbox" class="switch"></label>
+        <label class="row">Subtitrni yashirish (bosganda koʻrinadi) <input id="set-listen-hide" type="checkbox" class="switch"></label>
+
+        <h3>Shadowing</h3>
+        <label class="row">Har bir gapni necha marta takrorlash
+          <select id="set-sh-rep" class="select"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+        </label>
+        <label class="row">Takrorlash uchun pauza (gap uzunligiga nisbatan)
+          <select id="set-sh-factor" class="select">
+            <option value="1">1×</option><option value="1.3">1.3×</option><option value="1.6">1.6×</option><option value="2">2×</option><option value="2.5">2.5×</option>
+          </select>
+        </label>
+        <label class="row">Pauza vaqtida ovozimni avtomatik yozib olish <input id="set-sh-rec" type="checkbox" class="switch"></label>
+
+        <h3>Xotira</h3>
+        <div id="storage-info" class="muted small"></div>
+        <div class="btn-row">
+          <button id="btn-clear-cache" class="btn">Tarjima keshini tozalash</button>
+        </div>
+
+        <h3>Qanday foydalaniladi?</h3>
+        <div class="help">
+          <p><b>1. Video qoʻshing.</b> “Video qoʻshish” → video fayl (MP4 tavsiya etiladi) va inglizcha subtitr (.srt / .vtt). Ixtiyoriy ravishda oʻzbekcha subtitr ham qoʻshish mumkin.</p>
+          <p><b>2. Tomosha.</b> Subtitrdagi istalgan soʻzni bosing — oʻzbekcha tarjimasi, talaffuzi va lugʻat maʼnolari chiqadi. Gapdagi qoʻshni soʻzlarni belgilab, butun iborani tarjima qilish mumkin.</p>
+          <p><b>3. Listening.</b> Subtitr yashiriladi, har gapdan keyin video toʻxtaydi. Qayta eshiting, eshitganingizni yozib tekshiring (diktant), keyin matnni oching.</p>
+          <p><b>4. Shadowing.</b> Video har gapdan keyin toʻxtaydi va sizga takrorlash uchun vaqt beradi. Ovozingizni yozib, asl talaffuz bilan solishtiring.</p>
+          <p><b>Maslahat:</b> <svg class="inline-ic"><use href="#i-loop"/></svg> tugmasi bitta gapni cheksiz takrorlaydi, tezlikni 0.75× ga tushirib tinglash foydali.</p>
+        </div>
+        <p class="muted small center">Til Player · 1.0</p>
+      </div>
+    </section>
+
+    <!-- PLEYER -->
+    <section id="view-player" class="view">
+      <header class="topbar player-top">
+        <button id="btn-back" class="icon-btn" aria-label="Orqaga"><svg><use href="#i-left"/></svg></button>
+        <h2 id="player-title"></h2>
+        <button id="btn-player-menu" class="icon-btn" aria-label="Menyu"><svg><use href="#i-more"/></svg></button>
+      </header>
+
+      <div id="stage" class="stage">
+        <div class="vbox">
+          <video id="video" playsinline webkit-playsinline preload="auto"></video>
+          <div id="stage-status" class="stage-status hidden"></div>
+          <div id="sub-overlay" class="sub-overlay">
+            <div class="sub-en"></div>
+            <div class="sub-uz"></div>
+          </div>
+          <div id="big-play" class="big-play hidden"><svg><use href="#i-play"/></svg></div>
+        </div>
+        <div id="controls" class="controls">
+          <div class="seek-row">
+            <span id="time-cur">0:00</span>
+            <input id="seek" type="range" min="0" max="1000" value="0" step="1">
+            <span id="time-dur">0:00</span>
+          </div>
+          <div class="ctrl-row">
+            <button id="c-prev" class="icon-btn" title="Oldingi gap"><svg><use href="#i-prev"/></svg></button>
+            <button id="c-back5" class="icon-btn" title="5 soniya orqaga"><svg><use href="#i-back5"/></svg></button>
+            <button id="c-play" class="icon-btn play" title="Ijro / pauza"><svg><use href="#i-play"/></svg></button>
+            <button id="c-fwd5" class="icon-btn" title="5 soniya oldinga"><svg><use href="#i-fwd5"/></svg></button>
+            <button id="c-next" class="icon-btn" title="Keyingi gap"><svg><use href="#i-next"/></svg></button>
+            <span class="spacer"></span>
+            <button id="c-replay" class="icon-btn" title="Gapni qayta eshitish"><svg><use href="#i-replay"/></svg></button>
+            <button id="c-loop" class="icon-btn" title="Gapni aylantirib takrorlash"><svg><use href="#i-loop"/></svg></button>
+            <button id="c-speed" class="chip-btn" title="Tezlik">1×</button>
+            <button id="c-subs" class="chip-btn" title="Subtitr rejimi"><svg><use href="#i-cc"/></svg><span>EN</span></button>
+            <button id="c-fs" class="icon-btn" title="Toʻliq ekran"><svg><use href="#i-fs"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mode-tabs" role="tablist">
+        <button data-mode="watch" class="active">Tomosha</button>
+        <button data-mode="listen">Listening</button>
+        <button data-mode="shadow">Shadowing</button>
+      </div>
+
+      <div id="mode-panel" class="mode-panel">
+        <div data-panel="watch" class="panel">
+          <p class="muted small">Soʻzni bosing — tarjimasi chiqadi. <b>UZ</b> tugmasi butun gapni tarjima qiladi. Pastdagi matndan istalgan gapga oʻtish mumkin.</p>
+        </div>
+
+        <div data-panel="listen" class="panel hidden">
+          <div class="toggles">
+            <label class="tog"><input type="checkbox" id="l-autopause"> Gapdan keyin toʻxtash</label>
+            <label class="tog"><input type="checkbox" id="l-hide"> Subtitrni yashirish</label>
+          </div>
+          <div class="btn-row">
+            <button id="l-replay" class="btn"><svg><use href="#i-replay"/></svg>Qayta</button>
+            <button id="l-reveal" class="btn"><svg><use href="#i-eye"/></svg>Koʻrsatish</button>
+            <button id="l-next" class="btn primary"><svg><use href="#i-next"/></svg>Davom</button>
+          </div>
+          <div class="dictation">
+            <textarea id="l-input" class="input" rows="2" placeholder="Eshitganingizni yozing (diktant)…" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+            <button id="l-check" class="btn"><svg><use href="#i-check"/></svg>Tekshirish</button>
+          </div>
+          <div id="l-result" class="dict-result"></div>
+        </div>
+
+        <div data-panel="shadow" class="panel hidden">
+          <div id="sh-line" class="sh-line muted">Ijroni bosing — video har gapdan keyin toʻxtaydi, siz esa gapni ovoz chiqarib takrorlaysiz.</div>
+          <div class="sh-meta">
+            <span id="sh-rep" class="badge"></span>
+            <span id="sh-count" class="badge accent hidden"></span>
+          </div>
+          <div class="btn-row">
+            <button id="sh-orig" class="btn"><svg><use href="#i-replay"/></svg>Asl gap</button>
+            <button id="sh-rec" class="btn rec"><svg><use href="#i-mic"/></svg><span>Yozish</span></button>
+            <button id="sh-mine" class="btn" disabled><svg><use href="#i-speaker"/></svg>Ovozim</button>
+            <button id="sh-skip" class="btn primary"><svg><use href="#i-next"/></svg>Keyingi</button>
+          </div>
+          <div class="toggles">
+            <label class="tog">Takror: <select id="sh-rep-sel" class="select sm"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+            <label class="tog">Pauza: <select id="sh-factor-sel" class="select sm"><option value="1">1×</option><option value="1.3">1.3×</option><option value="1.6">1.6×</option><option value="2">2×</option><option value="2.5">2.5×</option></select></label>
+            <label class="tog"><input type="checkbox" id="sh-autorec"> Avto yozish</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="transcript-head">
+        <span>Matn</span>
+        <label class="tog small"><input type="checkbox" id="t-autoscroll" checked> Avto-aylantirish</label>
+      </div>
+      <div id="transcript" class="transcript"></div>
+    </section>
+
+    <nav class="bottom-nav">
+      <button data-view="library" class="active"><svg><use href="#i-film"/></svg><span>Videolar</span></button>
+      <button data-view="vocab"><svg><use href="#i-book"/></svg><span>Lugʻat</span></button>
+      <button data-view="settings"><svg><use href="#i-gear"/></svg><span>Sozlamalar</span></button>
+    </nav>
+  </div>
+
+  <!-- VIDEO QO'SHISH -->
+  <div id="modal-add" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head"><h3>Video qoʻshish</h3><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+      <label class="file-pick">
+        <span class="fp-label">1. Video fayl <b>*</b></span>
+        <input id="add-video" type="file" accept="video/*,.mkv,.mp4,.webm,.mov,.m4v">
+        <span class="fp-name" id="add-video-name">Tanlanmagan</span>
+      </label>
+      <label class="file-pick">
+        <span class="fp-label">2. Inglizcha subtitr (.srt / .vtt)</span>
+        <input id="add-sub-en" type="file">
+        <span class="fp-name" id="add-sub-en-name">Tanlanmagan</span>
+      </label>
+      <label class="file-pick">
+        <span class="fp-label">3. Oʻzbekcha subtitr (ixtiyoriy)</span>
+        <input id="add-sub-uz" type="file">
+        <span class="fp-name" id="add-sub-uz-name">Tanlanmagan</span>
+      </label>
+      <label class="field">Nomi<input id="add-title" class="input" type="text" placeholder="Video nomi"></label>
+      <div id="add-status" class="muted small"></div>
+      <div class="btn-row end">
+        <button class="btn" data-close>Bekor qilish</button>
+        <button id="add-save" class="btn primary">Saqlash</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PLEYER MENYUSI -->
+  <div id="modal-menu" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head"><h3>Video sozlamalari</h3><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+      <label class="file-pick">
+        <span class="fp-label">Inglizcha subtitrni almashtirish</span>
+        <input id="menu-sub-en" type="file">
+        <span class="fp-name" id="menu-sub-en-name"></span>
+      </label>
+      <label class="file-pick">
+        <span class="fp-label">Oʻzbekcha subtitr</span>
+        <input id="menu-sub-uz" type="file">
+        <span class="fp-name" id="menu-sub-uz-name"></span>
+      </label>
+      <div class="field">Subtitr sinxroni (kechiksa yoki oldinda boʻlsa)
+        <div class="btn-row">
+          <button class="btn" data-offset="-0.5">−0.5 s</button>
+          <button class="btn" data-offset="-0.1">−0.1 s</button>
+          <b id="menu-offset" class="offset-val">0.0 s</b>
+          <button class="btn" data-offset="0.1">+0.1 s</button>
+          <button class="btn" data-offset="0.5">+0.5 s</button>
+        </div>
+      </div>
+      <label class="field">Nomi<input id="menu-title" class="input" type="text"></label>
+      <div class="btn-row end">
+        <button id="menu-save-title" class="btn primary">Saqlash</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SO'Z TARJIMASI (pastdan chiquvchi oyna) -->
+  <div id="sheet" class="modal sheet-wrap hidden" role="dialog" aria-modal="true">
+    <div class="sheet">
+      <div class="sheet-grip"></div>
+      <div class="sheet-head">
+        <div class="w-word" id="w-word"></div>
+        <button id="w-speak" class="icon-btn" title="Talaffuz"><svg><use href="#i-speaker"/></svg></button>
+        <button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button>
+      </div>
+      <div id="w-trans" class="w-trans"></div>
+      <div id="w-dict" class="w-dict"></div>
+      <div class="w-block">
+        <div class="w-label">Gap — iborani tanlash uchun qoʻshni soʻzlarni bosing</div>
+        <div id="w-chips" class="w-chips"></div>
+        <div id="w-sent-tr" class="w-sent-tr"></div>
+        <div class="btn-row">
+          <button id="w-sent-btn" class="btn"><svg><use href="#i-globe"/></svg>Butun gapni tarjima qilish</button>
+          <button id="w-sent-speak" class="btn"><svg><use href="#i-speaker"/></svg>Gapni tinglash</button>
+        </div>
+      </div>
+      <div class="w-block">
+        <div class="w-label">Lugʻatga saqlanadigan tarjima (oʻzgartirishingiz mumkin)</div>
+        <div class="w-save">
+          <input id="w-edit" class="input" type="text">
+          <button id="w-save" class="btn primary"><svg><use href="#i-star"/></svg>Saqlash</button>
+        </div>
+        <a id="w-google" class="link small" target="_blank" rel="noopener">Google Translate’da ochish ↗</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- KARTOCHKALAR (takrorlash) -->
+  <div id="modal-cards" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card cards">
+      <div class="modal-head"><h3>Takrorlash <span id="card-progress" class="muted small"></span></h3><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+      <div id="card" class="card">
+        <div id="card-word" class="card-word"></div>
+        <button id="card-speak" class="icon-btn"><svg><use href="#i-speaker"/></svg></button>
+        <div id="card-context" class="card-context"></div>
+        <div id="card-answer" class="card-answer hidden"></div>
+      </div>
+      <div id="card-actions-show" class="btn-row center">
+        <button id="card-show" class="btn primary wide">Tarjimani koʻrsatish</button>
+      </div>
+      <div id="card-actions-grade" class="btn-row center hidden">
+        <button id="card-no" class="btn danger wide">Bilmayman</button>
+        <button id="card-yes" class="btn success wide">Bilaman</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

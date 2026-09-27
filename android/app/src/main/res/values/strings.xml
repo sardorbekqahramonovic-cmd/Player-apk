@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Til Player</string>
+    <string name="title_activity_main">Til Player</string>
+    <string name="package_name">uz.tilplayer.app</string>
+    <string name="custom_url_scheme">uz.tilplayer.app</string>
+</resources>

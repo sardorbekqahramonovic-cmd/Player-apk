@@ -1,0 +1,1377 @@
+import * as db from './db.js';
+import {
+  readSubtitleFile, tokenize, cueIndexAt, activeCueAt, compareDictation, formatTime, words,
+} from './subtitles.js';
+import { translate, overrideTranslation, googleTranslateLink } from './translate.js';
+import { speak, lockLandscape, VoiceRecorder } from './media.js';
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+const SPEEDS = [0.5, 0.6, 0.75, 0.85, 1, 1.25, 1.5];
+const SUB_MODES = ['en', 'en+uz', 'hidden', 'off'];
+const SUB_LABEL = { en: 'EN', 'en+uz': 'EN+UZ', hidden: 'Yashirin', off: 'Oʻchiq' };
+
+const S = {
+  settings: null,
+  videos: [],
+  vocab: [],
+  savedWords: new Set(),
+  view: 'library',
+  // pleyer holati
+  cur: null,
+  objectUrl: null,
+  cues: [],
+  uzCues: [],
+  offset: 0,
+  mode: 'watch',
+  subMode: 'en',
+  loop: false,
+  activeIdx: -1,
+  playIdx: -1,
+  endFired: false,
+  revealed: new Set(),
+  lastSave: 0,
+  userScrollAt: 0,
+  // shadowing
+  sh: { idx: -1, reps: 0, timer: null, waiting: false, until: 0 },
+  // so'z oynasi
+  word: null,
+};
+
+const video = $('#video');
+const recorder = new VoiceRecorder();
+
+// ================= Yordamchi funksiyalar =================
+
+let toastTimer;
+function toast(msg, ms = 2600) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function normWord(w) {
+  return w.toLowerCase().replace(/’/g, "'");
+}
+
+function cueHTML(cue) {
+  let wi = 0;
+  return tokenize(cue.text).map((tok) => {
+    if (!tok.w) return esc(tok.t);
+    const cls = S.savedWords.has(normWord(tok.t)) ? 'w saved' : 'w';
+    return `<span class="${cls}" data-ci="${cue.i}" data-wi="${wi++}">${esc(tok.t)}</span>`;
+  }).join('');
+}
+
+function openModal(id) {
+  $(id).classList.remove('hidden');
+}
+
+function closeModal(el) {
+  const m = el.closest ? el.closest('.modal') : el;
+  if (!m) return;
+  m.classList.add('hidden');
+  if (m.id === 'sheet') onSheetClosed();
+}
+
+function topModal() {
+  return $$('.modal').filter((m) => !m.classList.contains('hidden')).pop();
+}
+
+// ================= Navigatsiya =================
+
+function showView(name) {
+  S.view = name;
+  $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
+  $$('.bottom-nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+  document.body.classList.toggle('in-player', name === 'player');
+  if (name === 'library') renderLibrary();
+  if (name === 'vocab') renderVocab();
+  if (name === 'settings') renderSettings();
+}
+
+$$('.bottom-nav button').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
+
+document.addEventListener('click', (e) => {
+  const close = e.target.closest('[data-close]');
+  if (close) { closeModal(close); return; }
+  if (e.target.classList.contains('modal')) closeModal(e.target);
+});
+
+function handleBack() {
+  const m = topModal();
+  if (m) { closeModal(m); return true; }
+  if (document.body.classList.contains('fs')) { setFullscreen(false); return true; }
+  if (S.view === 'player') { closePlayer(); return true; }
+  if (S.view !== 'library') { showView('library'); return true; }
+  return false;
+}
+
+// ================= Kutubxona =================
+
+async function loadVideos() {
+  S.videos = (await db.getAll('videos')).sort((a, b) => (b.openedAt || b.createdAt) - (a.openedAt || a.createdAt));
+}
+
+function renderLibrary() {
+  const list = $('#library-list');
+  $('#library-empty').classList.toggle('hidden', S.videos.length > 0);
+  list.innerHTML = S.videos.map((v) => {
+    const pct = v.duration ? Math.min(100, Math.round(((v.lastTime || 0) / v.duration) * 100)) : 0;
+    const thumb = v.thumb ? `style="background-image:url('${v.thumb}')"` : '';
+    return `
+      <div class="vcard" data-id="${v.id}">
+        <div class="thumb" ${thumb}>${v.thumb ? '' : '<svg><use href="#i-film"/></svg>'}</div>
+        <div class="progress"><i style="width:${pct}%"></i></div>
+        <div class="info">
+          <div style="flex:1">
+            <div class="title">${esc(v.title)}</div>
+            <div class="meta">
+              ${v.duration ? `<span class="badge">${formatTime(v.duration)}</span>` : ''}
+              ${v.subEn ? `<span class="badge">EN ${v.subEn.length} gap</span>` : '<span class="badge" style="color:var(--warn)">Subtitr yoʻq</span>'}
+              ${v.subUz ? '<span class="badge">UZ</span>' : ''}
+              ${pct ? `<span class="badge">${pct}%</span>` : ''}
+            </div>
+          </div>
+          <button class="icon-btn del" data-del="${v.id}" title="Oʻchirish"><svg><use href="#i-trash"/></svg></button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+$('#library-list').addEventListener('click', async (e) => {
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    e.stopPropagation();
+    const v = S.videos.find((x) => x.id === del.dataset.del);
+    if (v && confirm(`“${v.title}” oʻchirilsinmi?`)) {
+      await db.deleteVideo(v.id);
+      await loadVideos();
+      renderLibrary();
+      toast('Video oʻchirildi');
+    }
+    return;
+  }
+  const card = e.target.closest('.vcard');
+  if (card) openPlayer(card.dataset.id);
+});
+
+// ---- Video qo'shish ----
+
+const addForm = { video: null, en: null, uz: null };
+
+function resetAddForm() {
+  addForm.video = addForm.en = addForm.uz = null;
+  ['#add-video', '#add-sub-en', '#add-sub-uz'].forEach((s) => { $(s).value = ''; });
+  $('#add-video-name').textContent = 'Tanlanmagan';
+  $('#add-sub-en-name').textContent = 'Tanlanmagan';
+  $('#add-sub-uz-name').textContent = 'Tanlanmagan';
+  $('#add-title').value = '';
+  $('#add-status').textContent = '';
+  $('#add-save').disabled = false;
+}
+
+function openAdd() {
+  resetAddForm();
+  openModal('#modal-add');
+}
+
+$('#btn-add').addEventListener('click', openAdd);
+$('[data-action="add"]').addEventListener('click', openAdd);
+
+$('#add-video').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  addForm.video = f || null;
+  $('#add-video-name').textContent = f ? `${f.name} (${(f.size / 1048576).toFixed(1)} MB)` : 'Tanlanmagan';
+  if (f && !$('#add-title').value) $('#add-title').value = f.name.replace(/\.[^.]+$/, '').replace(/[._]+/g, ' ').trim();
+});
+
+async function pickSub(input, nameEl, key) {
+  const f = input.files[0];
+  if (!f) return;
+  try {
+    const cues = await readSubtitleFile(f);
+    addForm[key] = cues;
+    $(nameEl).textContent = `${f.name} — ${cues.length} ta gap`;
+  } catch (err) {
+    addForm[key] = null;
+    input.value = '';
+    $(nameEl).textContent = 'Tanlanmagan';
+    toast(err.message, 4000);
+  }
+}
+$('#add-sub-en').addEventListener('change', (e) => pickSub(e.target, '#add-sub-en-name', 'en'));
+$('#add-sub-uz').addEventListener('change', (e) => pickSub(e.target, '#add-sub-uz-name', 'uz'));
+
+function makeThumbnail(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    let done = false;
+    const finish = (res) => {
+      if (done) return;
+      done = true;
+      URL.revokeObjectURL(url);
+      v.removeAttribute('src');
+      v.load();
+      resolve(res);
+    };
+    setTimeout(() => finish({}), 8000);
+    v.muted = true;
+    v.preload = 'auto';
+    v.playsInline = true;
+    v.onloadedmetadata = () => {
+      v.currentTime = Math.min(Math.max(1, v.duration * 0.1), 30);
+    };
+    v.onseeked = () => {
+      try {
+        const c = document.createElement('canvas');
+        const w = 320;
+        const h = Math.round((v.videoHeight / v.videoWidth) * w) || 180;
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(v, 0, 0, w, h);
+        finish({ thumb: c.toDataURL('image/jpeg', 0.7), duration: v.duration });
+      } catch (_) {
+        finish({ duration: v.duration });
+      }
+    };
+    v.onerror = () => finish({});
+    v.src = url;
+  });
+}
+
+$('#add-save').addEventListener('click', async () => {
+  if (!addForm.video) { toast('Avval video faylni tanlang'); return; }
+  const btn = $('#add-save');
+  btn.disabled = true;
+  $('#add-status').textContent = 'Video ilovaga saqlanmoqda… (katta fayllarda biroz vaqt oladi)';
+  try {
+    const { thumb, duration } = await makeThumbnail(addForm.video);
+    const meta = {
+      id: db.uid(),
+      title: $('#add-title').value.trim() || addForm.video.name,
+      fileName: addForm.video.name,
+      size: addForm.video.size,
+      type: addForm.video.type,
+      thumb: thumb || null,
+      duration: duration || 0,
+      subEn: addForm.en,
+      subUz: addForm.uz,
+      offset: 0,
+      lastTime: 0,
+      createdAt: Date.now(),
+    };
+    await db.addVideo(meta, addForm.video);
+    await loadVideos();
+    closeModal($('#modal-add'));
+    renderLibrary();
+    toast(meta.subEn ? 'Video saqlandi' : 'Video saqlandi. Subtitrni keyinroq pleyer menyusidan qoʻshishingiz mumkin', 3500);
+  } catch (err) {
+    console.error(err);
+    $('#add-status').textContent = 'Saqlab boʻlmadi: ' + (err && err.message ? err.message : err)
+      + '. Qurilmada joy yetarli ekanini tekshiring.';
+    btn.disabled = false;
+  }
+});
+
+// ================= Pleyer =================
+
+async function openPlayer(id, atTime) {
+  const meta = await db.get('videos', id);
+  if (!meta) { toast('Video topilmadi'); return; }
+  const blob = await db.get('blobs', id);
+  if (!blob) { toast('Video fayli topilmadi'); return; }
+
+  if (S.objectUrl) URL.revokeObjectURL(S.objectUrl);
+  S.objectUrl = URL.createObjectURL(blob);
+  S.cur = meta;
+  S.cues = meta.subEn || [];
+  S.uzCues = meta.subUz || [];
+  S.offset = meta.offset || 0;
+  S.activeIdx = -1;
+  S.playIdx = -1;
+  S.endFired = false;
+  S.loop = false;
+  S.revealed = new Set();
+  resetShadow();
+
+  renderOverlay();
+  $('#player-title').textContent = meta.title;
+  video.src = S.objectUrl;
+  video.playbackRate = S.settings.defaultSpeed;
+  video.defaultPlaybackRate = S.settings.defaultSpeed;
+  updateSpeedBtn();
+
+  const start = atTime != null ? atTime : (meta.lastTime && meta.duration && meta.lastTime < meta.duration - 5 ? meta.lastTime : 0);
+  video.addEventListener('loadedmetadata', function once() {
+    video.removeEventListener('loadedmetadata', once);
+    if (start) video.currentTime = start;
+    tick(true);
+  });
+
+  db.updateVideo(id, { openedAt: Date.now() });
+  setMode('watch');
+  renderTranscript();
+  updateLoopBtn();
+  showView('player');
+  updatePlayBtn();
+}
+
+async function closePlayer() {
+  video.pause();
+  await saveProgress(true);
+  setFullscreen(false);
+  resetShadow();
+  if (recorder.recording) await recorder.stop();
+  recorder.release();
+  video.removeAttribute('src');
+  video.load();
+  if (S.objectUrl) { URL.revokeObjectURL(S.objectUrl); S.objectUrl = null; }
+  S.cur = null;
+  await loadVideos();
+  showView('library');
+}
+
+$('#btn-back').addEventListener('click', closePlayer);
+
+async function saveProgress(force) {
+  if (!S.cur) return;
+  const now = Date.now();
+  if (!force && now - S.lastSave < 4000) return;
+  S.lastSave = now;
+  const patch = { lastTime: video.currentTime || 0 };
+  if (isFinite(video.duration) && video.duration) patch.duration = video.duration;
+  await db.updateVideo(S.cur.id, patch).catch(() => {});
+}
+
+// ---- Vaqtni kuzatish ----
+
+let rafId = 0;
+function loop() {
+  tick();
+  rafId = video.paused ? 0 : requestAnimationFrame(loop);
+}
+
+function subTime() {
+  return video.currentTime - S.offset;
+}
+
+function tick(force) {
+  const t = subTime();
+  const cues = S.cues;
+  const idx = activeCueAt(cues, t);
+  if (idx !== S.activeIdx || force) {
+    S.activeIdx = idx;
+    renderOverlay();
+    highlightTranscript();
+  }
+  const pi = cueIndexAt(cues, t);
+  if (pi !== S.playIdx) {
+    S.playIdx = pi;
+    S.endFired = false;
+    if (S.mode === 'shadow') renderShadowLine();
+  }
+  if (pi >= 0 && !S.endFired && !video.paused && t >= cues[pi].end - 0.05) {
+    S.endFired = true;
+    onCueEnd(pi);
+  }
+  updateTime();
+}
+
+function updateTime() {
+  const d = video.duration || 0;
+  $('#time-cur').textContent = formatTime(video.currentTime);
+  $('#time-dur').textContent = formatTime(d);
+  if (!seeking) $('#seek').value = d ? Math.round((video.currentTime / d) * 1000) : 0;
+}
+
+video.addEventListener('play', () => {
+  if (!rafId) rafId = requestAnimationFrame(loop);
+  updatePlayBtn();
+  armIdle();
+});
+video.addEventListener('pause', () => { updatePlayBtn(); saveProgress(true); showControls(); });
+video.addEventListener('timeupdate', () => { if (video.paused) tick(); saveProgress(false); });
+video.addEventListener('seeked', () => tick());
+video.addEventListener('durationchange', updateTime);
+video.addEventListener('ended', () => { updatePlayBtn(); saveProgress(true); });
+video.addEventListener('error', () => {
+  if (!S.cur) return;
+  toast('Bu videoni qurilma oʻynata olmadi. MP4 (H.264/AAC) formatidagi video tavsiya etiladi.', 6000);
+});
+
+function updatePlayBtn() {
+  const playing = !video.paused;
+  $('#c-play use').setAttribute('href', playing ? '#i-pause' : '#i-play');
+  $('#big-play').classList.toggle('hidden', playing || !S.cur || S.sh.waiting);
+}
+
+function play() {
+  if (S.sh.waiting) { shadowContinue(); return; }
+  video.play().catch(() => {});
+}
+
+function togglePlay() {
+  if (video.paused) play();
+  else { video.pause(); cancelShadowWait(); }
+}
+
+function seekTo(time) {
+  const d = video.duration || Infinity;
+  video.currentTime = Math.max(0, Math.min(time, d - 0.1));
+  S.endFired = false;
+}
+
+function seekToCue(i, autoplay = true) {
+  if (i < 0 || i >= S.cues.length) return;
+  cancelShadowWait();
+  S.endFired = false;
+  video.currentTime = Math.max(0, S.cues[i].start + S.offset + 0.001);
+  tick();
+  if (autoplay) video.play().catch(() => {});
+}
+
+function currentLine() {
+  const t = subTime();
+  const i = cueIndexAt(S.cues, t);
+  return i;
+}
+
+function prevLine() {
+  const i = currentLine();
+  if (i < 0) return seekToCue(0);
+  const t = subTime();
+  // gap boshidan 1 soniyadan ko'p o'tgan bo'lsa — shu gapning boshiga, aks holda oldingisiga
+  seekToCue(t - S.cues[i].start > 1 ? i : Math.max(0, i - 1));
+}
+
+function nextLine() {
+  const i = currentLine();
+  seekToCue(Math.min(S.cues.length - 1, i + 1));
+}
+
+function replayLine() {
+  const i = currentLine();
+  if (i >= 0) seekToCue(i);
+}
+
+// ---- Gap tugaganda ----
+
+function onCueEnd(i) {
+  if (S.mode === 'shadow') { shadowPause(i); return; }
+  if (S.loop) { seekToCue(i); return; }
+  if (S.mode === 'listen' && $('#l-autopause').checked) {
+    video.pause();
+    setStatus('<svg><use href="#i-replay"/></svg>Qayta eshiting yoki davom eting');
+  }
+}
+
+let statusTimer;
+function setStatus(html, ms = 2500) {
+  const el = $('#stage-status');
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+  clearTimeout(statusTimer);
+  if (ms) statusTimer = setTimeout(() => el.classList.add('hidden'), ms);
+}
+function clearStatus() {
+  clearTimeout(statusTimer);
+  $('#stage-status').classList.add('hidden');
+}
+
+// ---- Subtitr ko'rsatish ----
+
+function uzTextFor(idx) {
+  if (!S.uzCues.length) return null;
+  const cue = S.cues[idx];
+  const mid = (cue.start + cue.end) / 2;
+  // o'rtasiga eng yaqin keladigan o'zbekcha qator
+  let j = activeCueAt(S.uzCues, mid);
+  if (j < 0) j = activeCueAt(S.uzCues, cue.start + 0.1);
+  return j >= 0 ? S.uzCues[j].text : null;
+}
+
+function renderOverlay() {
+  const en = $('#sub-overlay .sub-en');
+  const uz = $('#sub-overlay .sub-uz');
+  const idx = S.activeIdx;
+  en.classList.remove('blurred');
+  if (S.subMode === 'off') {
+    en.innerHTML = '';
+    uz.textContent = '';
+    // o'zbekcha subtitr bo'lsa-yu, inglizchasi bo'lmasa ham ko'rsatmaymiz
+    return;
+  }
+  if (idx < 0) {
+    en.innerHTML = '';
+    uz.textContent = '';
+    if (!S.cues.length && S.uzCues.length && S.subMode !== 'hidden') {
+      const j = activeCueAt(S.uzCues, subTime());
+      uz.textContent = j >= 0 ? S.uzCues[j].text : '';
+    }
+    return;
+  }
+  const cue = S.cues[idx];
+  en.innerHTML = cueHTML(cue);
+  en.dataset.ci = idx;
+  const hidden = S.subMode === 'hidden' && !S.revealed.has(idx);
+  en.classList.toggle('blurred', hidden);
+
+  uz.textContent = '';
+  const wantUz = S.subMode === 'en+uz' || (S.settings.autoTranslateLine && !hidden && S.subMode === 'en');
+  if (wantUz && !hidden) {
+    const ready = uzTextFor(idx);
+    if (ready) uz.textContent = ready;
+    else if (S.subMode === 'en+uz' || S.settings.autoTranslateLine) {
+      translate(cue.text).then((r) => {
+        if (S.activeIdx === idx) uz.textContent = r.text;
+      }).catch(() => {});
+    }
+  }
+}
+
+function setSubMode(m) {
+  S.subMode = m;
+  const b = $('#c-subs');
+  $('span', b).textContent = SUB_LABEL[m];
+  b.classList.toggle('off', m === 'off');
+  if ($('#l-hide')) $('#l-hide').checked = m === 'hidden';
+  renderOverlay();
+  refreshTranscriptBlur();
+}
+
+$('#c-subs').addEventListener('click', () => {
+  const next = SUB_MODES[(SUB_MODES.indexOf(S.subMode) + 1) % SUB_MODES.length];
+  setSubMode(next);
+  toast('Subtitr: ' + SUB_LABEL[next], 1200);
+});
+
+// ---- Transcript ----
+
+function renderTranscript() {
+  const tr = $('#transcript');
+  if (!S.cues.length) {
+    tr.innerHTML = `<div class="empty small">Bu videoga inglizcha subtitr qoʻshilmagan.<br>Yuqoridagi <b>⋮</b> menyusidan .srt yoki .vtt faylini qoʻshing.</div>`;
+    return;
+  }
+  tr.innerHTML = S.cues.map((c) => `
+    <div class="tl" data-ci="${c.i}">
+      <button class="tl-time" data-seek="${c.i}">${formatTime(c.start)}</button>
+      <div class="tl-text">${cueHTML(c)}</div>
+      <button class="tl-tr" data-tr="${c.i}">UZ</button>
+      <div class="tl-uz"></div>
+    </div>`).join('');
+  refreshTranscriptBlur();
+  highlightTranscript(true);
+}
+
+function refreshTranscriptBlur() {
+  const hide = S.subMode === 'hidden';
+  $$('#transcript .tl').forEach((row) => {
+    const i = +row.dataset.ci;
+    row.classList.toggle('blurred', hide && !S.revealed.has(i));
+  });
+}
+
+let lastHl = null;
+function highlightTranscript(forceScroll) {
+  const idx = S.activeIdx >= 0 ? S.activeIdx : S.playIdx;
+  const row = idx >= 0 ? $(`#transcript .tl[data-ci="${idx}"]`) : null;
+  if (lastHl && lastHl !== row) lastHl.classList.remove('active');
+  if (!row) return;
+  row.classList.add('active');
+  if (lastHl !== row || forceScroll) {
+    lastHl = row;
+    const recentlyScrolled = Date.now() - S.userScrollAt < 4000;
+    if ($('#t-autoscroll').checked && (!recentlyScrolled || forceScroll)) {
+      const box = $('#transcript');
+      const top = row.offsetTop - box.clientHeight / 3;
+      box.scrollTo({ top, behavior: forceScroll ? 'auto' : 'smooth' });
+    }
+  }
+}
+
+['touchmove', 'wheel'].forEach((ev) => $('#transcript').addEventListener(ev, () => { S.userScrollAt = Date.now(); }, { passive: true }));
+
+$('#transcript').addEventListener('click', async (e) => {
+  const seek = e.target.closest('[data-seek]');
+  if (seek) { seekToCue(+seek.dataset.seek); return; }
+
+  const trBtn = e.target.closest('[data-tr]');
+  if (trBtn) {
+    const i = +trBtn.dataset.tr;
+    const out = trBtn.parentElement.querySelector('.tl-uz');
+    if (out.textContent) { out.textContent = ''; return; }
+    const ready = uzTextFor(i);
+    if (ready) { out.textContent = ready; return; }
+    out.textContent = 'Tarjima qilinmoqda…';
+    try {
+      out.textContent = (await translate(S.cues[i].text)).text;
+    } catch (err) {
+      out.textContent = err.message;
+    }
+    return;
+  }
+
+  const row = e.target.closest('.tl');
+  if (!row) return;
+  const i = +row.dataset.ci;
+  if (row.classList.contains('blurred')) {
+    S.revealed.add(i);
+    refreshTranscriptBlur();
+    if (S.activeIdx === i) renderOverlay();
+    return;
+  }
+  const w = e.target.closest('.w');
+  if (w) { openWord(+w.dataset.ci, +w.dataset.wi); return; }
+  seekToCue(i);
+});
+
+// ---- Subtitr ustiga bosish ----
+
+$('#sub-overlay').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const en = e.target.closest('.sub-en');
+  if (en && en.classList.contains('blurred')) {
+    S.revealed.add(+en.dataset.ci);
+    renderOverlay();
+    refreshTranscriptBlur();
+    return;
+  }
+  const w = e.target.closest('.w');
+  if (w) openWord(+w.dataset.ci, +w.dataset.wi);
+});
+
+// ---- Boshqaruv tugmalari ----
+
+$('#c-play').addEventListener('click', togglePlay);
+$('#c-back5').addEventListener('click', () => seekTo(video.currentTime - 5));
+$('#c-fwd5').addEventListener('click', () => seekTo(video.currentTime + 5));
+$('#c-prev').addEventListener('click', prevLine);
+$('#c-next').addEventListener('click', nextLine);
+$('#c-replay').addEventListener('click', replayLine);
+
+function updateLoopBtn() {
+  $('#c-loop').classList.toggle('on', S.loop);
+}
+$('#c-loop').addEventListener('click', () => {
+  S.loop = !S.loop;
+  updateLoopBtn();
+  toast(S.loop ? 'Joriy gap takrorlanadi' : 'Takrorlash oʻchirildi', 1400);
+});
+
+function updateSpeedBtn() {
+  const r = video.playbackRate;
+  $('#c-speed').textContent = (Math.round(r * 100) / 100) + '×';
+}
+$('#c-speed').addEventListener('click', () => {
+  const cur = video.playbackRate;
+  const i = SPEEDS.findIndex((s) => s > cur + 0.001);
+  const next = i === -1 ? SPEEDS[0] : SPEEDS[i];
+  video.playbackRate = next;
+  updateSpeedBtn();
+});
+video.addEventListener('ratechange', updateSpeedBtn);
+
+let seeking = false;
+$('#seek').addEventListener('input', (e) => {
+  seeking = true;
+  const d = video.duration || 0;
+  $('#time-cur').textContent = formatTime((e.target.value / 1000) * d);
+});
+$('#seek').addEventListener('change', (e) => {
+  seeking = false;
+  const d = video.duration || 0;
+  cancelShadowWait();
+  seekTo((e.target.value / 1000) * d);
+});
+
+video.addEventListener('click', () => {
+  if (document.body.classList.contains('fs') && $('#stage').classList.contains('idle')) { showControls(); return; }
+  togglePlay();
+});
+
+// ---- To'liq ekran ----
+
+async function setFullscreen(on) {
+  const isOn = document.body.classList.contains('fs');
+  if (on === isOn) return;
+  document.body.classList.toggle('fs', on);
+  $('#c-fs use').setAttribute('href', on ? '#i-fs-exit' : '#i-fs');
+  $('#stage').classList.toggle('with-controls', on);
+  try {
+    if (on && document.documentElement.requestFullscreen && !document.fullscreenElement) {
+      await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    } else if (!on && document.fullscreenElement) {
+      await document.exitFullscreen();
+    }
+  } catch (_) { /* WebView'da har doim ham ishlamaydi — CSS rejimi yetarli */ }
+  lockLandscape(on);
+  showControls();
+}
+$('#c-fs').addEventListener('click', () => setFullscreen(!document.body.classList.contains('fs')));
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && document.body.classList.contains('fs')) setFullscreen(false);
+});
+
+let idleTimer;
+function showControls() {
+  $('#stage').classList.remove('idle');
+  armIdle();
+}
+function armIdle() {
+  clearTimeout(idleTimer);
+  if (!document.body.classList.contains('fs')) return;
+  idleTimer = setTimeout(() => {
+    if (!video.paused) $('#stage').classList.add('idle');
+  }, 3000);
+}
+$('#controls').addEventListener('pointerdown', showControls);
+
+// ================= Rejimlar =================
+
+function setMode(mode) {
+  const prev = S.mode;
+  S.mode = mode;
+  $$('.mode-tabs button').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  $$('#mode-panel .panel').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== mode));
+  resetShadow();
+  clearStatus();
+
+  if (mode === 'listen') {
+    $('#l-autopause').checked = S.settings.listenAutoPause;
+    setSubMode(S.settings.listenHideSubs ? 'hidden' : 'en');
+    $('#l-result').innerHTML = '';
+  } else if (prev === 'listen' || S.subMode === 'hidden') {
+    setSubMode('en');
+  } else {
+    setSubMode(S.subMode);
+  }
+
+  if (mode === 'shadow') {
+    $('#sh-rep-sel').value = String(S.settings.shadowRepeats);
+    $('#sh-factor-sel').value = String(S.settings.shadowPauseFactor);
+    $('#sh-autorec').checked = S.settings.shadowAutoRecord;
+    renderShadowLine();
+  }
+}
+
+$$('.mode-tabs button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
+// ---- Listening ----
+
+$('#l-autopause').addEventListener('change', (e) => {
+  S.settings.listenAutoPause = e.target.checked;
+  db.saveSettings(S.settings);
+});
+$('#l-hide').addEventListener('change', (e) => {
+  S.settings.listenHideSubs = e.target.checked;
+  db.saveSettings(S.settings);
+  setSubMode(e.target.checked ? 'hidden' : 'en');
+});
+$('#l-replay').addEventListener('click', () => { $('#l-result').innerHTML = ''; replayLine(); });
+$('#l-reveal').addEventListener('click', () => {
+  const i = S.activeIdx >= 0 ? S.activeIdx : currentLine();
+  if (i < 0) return;
+  S.revealed.add(i);
+  renderOverlay();
+  refreshTranscriptBlur();
+  if (S.activeIdx !== i) toast(S.cues[i].text, 4000);
+});
+$('#l-next').addEventListener('click', () => {
+  $('#l-input').value = '';
+  $('#l-result').innerHTML = '';
+  clearStatus();
+  const i = currentLine();
+  const t = subTime();
+  // gap oxirida turgan bo'lsak — keyingisiga, aks holda davom
+  if (i >= 0 && t >= S.cues[i].end - 0.2) seekToCue(i + 1);
+  else video.play().catch(() => {});
+});
+$('#l-check').addEventListener('click', () => {
+  const i = currentLine();
+  if (i < 0) { toast('Avval gapni tinglang'); return; }
+  const typed = $('#l-input').value.trim();
+  if (!typed) { toast('Eshitganingizni yozing'); return; }
+  const { result, score } = compareDictation(S.cues[i].text, typed);
+  const cls = score >= 90 ? 'ok' : score >= 60 ? '' : 'miss';
+  $('#l-result').innerHTML = `<span class="score ${cls}">${score}%</span>` + result.map((r) => {
+    if (r.extra) return `<span class="extra">${esc(r.w)}</span>`;
+    return `<span class="${r.ok ? 'ok' : 'miss'}">${esc(r.w)}</span>`;
+  }).join(' ');
+  S.revealed.add(i);
+  renderOverlay();
+  refreshTranscriptBlur();
+});
+
+// ---- Shadowing ----
+
+function resetShadow() {
+  clearInterval(S.sh.timer);
+  S.sh = { idx: -1, reps: 0, timer: null, waiting: false, until: 0 };
+  $('#sh-count') && $('#sh-count').classList.add('hidden');
+  updateShadowMeta();
+}
+
+function cancelShadowWait() {
+  if (!S.sh.waiting) return;
+  clearInterval(S.sh.timer);
+  S.sh.waiting = false;
+  $('#sh-count').classList.add('hidden');
+  clearStatus();
+  if (recorder.recording && $('#sh-autorec').checked) stopRecording();
+  updatePlayBtn();
+}
+
+function updateShadowMeta() {
+  const el = $('#sh-rep');
+  if (!el) return;
+  const total = S.settings ? S.settings.shadowRepeats : 1;
+  el.textContent = `Takror: ${Math.min(S.sh.reps + 1, total)} / ${total}`;
+}
+
+function renderShadowLine() {
+  const el = $('#sh-line');
+  const i = S.playIdx >= 0 ? S.playIdx : 0;
+  if (!S.cues.length) {
+    el.textContent = 'Shadowing uchun inglizcha subtitr kerak.';
+    return;
+  }
+  el.classList.add('big');
+  el.innerHTML = cueHTML(S.cues[i]);
+  updateShadowMeta();
+}
+
+$('#sh-line').addEventListener('click', (e) => {
+  const w = e.target.closest('.w');
+  if (w) openWord(+w.dataset.ci, +w.dataset.wi);
+});
+
+function shadowPause(i) {
+  video.pause();
+  if (S.sh.idx !== i) { S.sh.idx = i; S.sh.reps = 0; }
+  const cue = S.cues[i];
+  const factor = +$('#sh-factor-sel').value || 1.3;
+  const dur = Math.max(1.5, ((cue.end - cue.start) / (video.playbackRate || 1)) * factor);
+  S.sh.waiting = true;
+  S.sh.until = Date.now() + dur * 1000;
+  updatePlayBtn();
+
+  if ($('#sh-autorec').checked) startRecording();
+
+  const countEl = $('#sh-count');
+  countEl.classList.remove('hidden');
+  const upd = () => {
+    const left = Math.max(0, (S.sh.until - Date.now()) / 1000);
+    countEl.textContent = `Sizning navbatingiz: ${left.toFixed(1)} s`;
+    setStatus(`<svg><use href="#i-mic"/></svg>Takrorlang… ${Math.ceil(left)}`, 0);
+    if (left <= 0) shadowContinue();
+  };
+  upd();
+  clearInterval(S.sh.timer);
+  S.sh.timer = setInterval(upd, 100);
+}
+
+async function shadowContinue() {
+  const i = S.sh.idx;
+  clearInterval(S.sh.timer);
+  S.sh.waiting = false;
+  $('#sh-count').classList.add('hidden');
+  clearStatus();
+  if (recorder.recording && $('#sh-autorec').checked) await stopRecording();
+  const total = +$('#sh-rep-sel').value || 1;
+  S.sh.reps++;
+  if (S.sh.reps < total) {
+    updateShadowMeta();
+    seekToCue(i);
+  } else {
+    S.sh.reps = 0;
+    S.sh.idx = -1;
+    updateShadowMeta();
+    if (i + 1 < S.cues.length) seekToCue(i + 1);
+    else toast('Barakalla! Video oxiriga yetdingiz 🎉');
+  }
+}
+
+$('#sh-orig').addEventListener('click', () => {
+  const i = S.sh.idx >= 0 ? S.sh.idx : currentLine();
+  if (i < 0) return;
+  cancelShadowWait();
+  seekToCue(i);
+});
+
+$('#sh-skip').addEventListener('click', () => {
+  cancelShadowWait();
+  S.sh.reps = 0;
+  S.sh.idx = -1;
+  const i = currentLine();
+  seekToCue(Math.min(S.cues.length - 1, i + 1));
+});
+
+async function startRecording() {
+  try {
+    await recorder.start();
+    $('#sh-rec').classList.add('on');
+    $('#sh-rec span').textContent = 'Toʻxtatish';
+    $('#sh-rec use').setAttribute('href', '#i-stop');
+  } catch (err) {
+    toast('Mikrofonga ruxsat berilmadi: ' + (err.message || err), 4000);
+    $('#sh-autorec').checked = false;
+  }
+}
+
+async function stopRecording() {
+  await recorder.stop();
+  $('#sh-rec').classList.remove('on');
+  $('#sh-rec span').textContent = 'Yozish';
+  $('#sh-rec use').setAttribute('href', '#i-mic');
+  $('#sh-mine').disabled = !recorder.url;
+}
+
+$('#sh-rec').addEventListener('click', async () => {
+  if (recorder.recording) await stopRecording();
+  else {
+    video.pause();
+    await startRecording();
+  }
+});
+
+$('#sh-mine').addEventListener('click', () => {
+  video.pause();
+  recorder.play();
+});
+
+$('#sh-rep-sel').addEventListener('change', (e) => {
+  S.settings.shadowRepeats = +e.target.value;
+  db.saveSettings(S.settings);
+  updateShadowMeta();
+});
+$('#sh-factor-sel').addEventListener('change', (e) => {
+  S.settings.shadowPauseFactor = +e.target.value;
+  db.saveSettings(S.settings);
+});
+$('#sh-autorec').addEventListener('change', (e) => {
+  S.settings.shadowAutoRecord = e.target.checked;
+  db.saveSettings(S.settings);
+});
+
+// ================= So'z tarjimasi oynasi =================
+
+let wasPlaying = false;
+
+function openWord(ci, wi) {
+  const cue = S.cues[ci];
+  if (!cue) return;
+  wasPlaying = !video.paused;
+  cancelShadowWait();
+  if (S.settings.pauseOnWordTap && wasPlaying) video.pause();
+  const ws = words(cue.text);
+  S.word = { ci, cue, words: ws, from: wi, to: wi, sentTr: null };
+  $('#w-chips').innerHTML = ws.map((w, k) => `<button data-k="${k}">${esc(w)}</button>`).join('');
+  $('#w-sent-tr').textContent = '';
+  $('#w-sent-tr').classList.remove('loading');
+  openModal('#sheet');
+  updateSelection();
+}
+
+function selectionText() {
+  const w = S.word;
+  return w.words.slice(w.from, w.to + 1).join(' ');
+}
+
+let wordReq = 0;
+async function updateSelection() {
+  const w = S.word;
+  $$('#w-chips button').forEach((b) => {
+    const k = +b.dataset.k;
+    b.classList.toggle('sel', k >= w.from && k <= w.to);
+  });
+  const text = selectionText();
+  $('#w-word').textContent = text;
+  $('#w-google').href = googleTranslateLink(text);
+  const trEl = $('#w-trans');
+  trEl.className = 'w-trans loading';
+  trEl.textContent = 'Tarjima qilinmoqda…';
+  $('#w-dict').innerHTML = '';
+  $('#w-edit').value = '';
+
+  const saved = S.vocab.find((v) => normWord(v.word) === normWord(text));
+  $('#w-save').innerHTML = saved
+    ? '<svg><use href="#i-check"/></svg>Saqlangan'
+    : '<svg><use href="#i-star"/></svg>Saqlash';
+
+  const req = ++wordReq;
+  // Bitta so'z bo'lsa kichik harf bilan so'raymiz (Google lug'at ma'nolarini shunda beradi)
+  const query = w.from === w.to ? text.toLowerCase() : text;
+  try {
+    const r = await translate(query);
+    if (req !== wordReq) return;
+    trEl.className = 'w-trans';
+    trEl.textContent = r.text;
+    $('#w-edit').value = saved ? saved.translation : r.text;
+    $('#w-dict').innerHTML = (r.dict || []).map((d) =>
+      `<div>${d.pos ? `<span class="pos">${esc(d.pos)}</span>` : ''}${d.terms.map(esc).join(', ')}</div>`).join('');
+  } catch (err) {
+    if (req !== wordReq) return;
+    trEl.className = 'w-trans error';
+    trEl.textContent = err.message;
+    $('#w-edit').value = saved ? saved.translation : '';
+    $('#w-edit').placeholder = 'Tarjimani oʻzingiz yozing';
+  }
+}
+
+$('#w-chips').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-k]');
+  if (!b || !S.word) return;
+  const k = +b.dataset.k;
+  const w = S.word;
+  if (k < w.from) w.from = k;
+  else if (k > w.to) w.to = k;
+  else if (w.from === w.to) return;
+  else if (k === w.from) w.from++;
+  else if (k === w.to) w.to--;
+  else { w.from = w.to = k; }
+  updateSelection();
+});
+
+$('#w-speak').addEventListener('click', () => {
+  speak(selectionText(), 0.85).catch((err) => toast(err.message));
+});
+$('#w-sent-speak').addEventListener('click', () => {
+  if (!S.word) return;
+  speak(S.word.cue.text.replace(/\n/g, ' '), 0.85).catch((err) => toast(err.message));
+});
+
+$('#w-sent-btn').addEventListener('click', async () => {
+  if (!S.word) return;
+  const el = $('#w-sent-tr');
+  const ready = uzTextFor(S.word.ci);
+  if (ready) { el.textContent = ready; S.word.sentTr = ready; return; }
+  el.classList.add('loading');
+  el.textContent = 'Tarjima qilinmoqda…';
+  try {
+    const r = await translate(S.word.cue.text.replace(/\n/g, ' '));
+    el.classList.remove('loading');
+    el.textContent = r.text;
+    S.word.sentTr = r.text;
+  } catch (err) {
+    el.textContent = err.message;
+  }
+});
+
+$('#w-save').addEventListener('click', async () => {
+  if (!S.word) return;
+  const word = selectionText();
+  const translation = $('#w-edit').value.trim();
+  if (!translation) { toast('Tarjimani yozing'); $('#w-edit').focus(); return; }
+  const existing = S.vocab.find((v) => normWord(v.word) === normWord(word));
+  const cached = $('#w-trans').classList.contains('error') ? null : $('#w-trans').textContent;
+  if (cached && translation !== cached) overrideTranslation(word.toLowerCase(), translation).catch(() => {});
+  const item = {
+    ...(existing || {}),
+    id: existing ? existing.id : db.uid(),
+    word,
+    translation,
+    sentence: S.word.cue.text.replace(/\n/g, ' '),
+    sentenceTr: S.word.sentTr || (existing && existing.sentenceTr) || '',
+    videoId: S.cur ? S.cur.id : null,
+    videoTitle: S.cur ? S.cur.title : '',
+    time: S.word.cue.start,
+    level: existing ? existing.level : 0,
+    createdAt: existing ? existing.createdAt : Date.now(),
+  };
+  await db.put('vocab', item);
+  await loadVocab();
+  $('#w-save').innerHTML = '<svg><use href="#i-check"/></svg>Saqlangan';
+  toast(existing ? 'Lugʻat yangilandi' : `“${word}” lugʻatga saqlandi`);
+  renderOverlay();
+  const row = $(`#transcript .tl[data-ci="${S.word.ci}"] .tl-text`);
+  if (row) row.innerHTML = cueHTML(S.word.cue);
+  if (S.mode === 'shadow') renderShadowLine();
+});
+
+function onSheetClosed() {
+  wordReq++;
+  if (S.view === 'player' && S.settings.pauseOnWordTap && wasPlaying && S.mode === 'watch') {
+    video.play().catch(() => {});
+  }
+  wasPlaying = false;
+}
+
+// ---- Pleyer menyusi ----
+
+$('#btn-player-menu').addEventListener('click', () => {
+  if (!S.cur) return;
+  $('#menu-sub-en-name').textContent = S.cues.length ? `${S.cues.length} ta gap yuklangan` : 'Yoʻq — fayl tanlang';
+  $('#menu-sub-uz-name').textContent = S.uzCues.length ? `${S.uzCues.length} ta gap yuklangan` : 'Yoʻq — fayl tanlang';
+  $('#menu-title').value = S.cur.title;
+  updateOffsetLabel();
+  openModal('#modal-menu');
+});
+
+function updateOffsetLabel() {
+  const o = S.offset;
+  $('#menu-offset').textContent = (o > 0 ? '+' : '') + o.toFixed(1) + ' s';
+}
+
+$$('#modal-menu [data-offset]').forEach((b) => b.addEventListener('click', async () => {
+  S.offset = Math.round((S.offset + parseFloat(b.dataset.offset)) * 10) / 10;
+  updateOffsetLabel();
+  tick(true);
+  await db.updateVideo(S.cur.id, { offset: S.offset });
+}));
+
+async function replaceSub(input, key) {
+  const f = input.files[0];
+  input.value = '';
+  if (!f || !S.cur) return;
+  try {
+    const cues = await readSubtitleFile(f);
+    await db.updateVideo(S.cur.id, { [key]: cues });
+    if (key === 'subEn') { S.cues = cues; S.revealed = new Set(); renderTranscript(); }
+    else S.uzCues = cues;
+    S.activeIdx = -2;
+    tick(true);
+    toast(`Subtitr yuklandi: ${cues.length} ta gap`);
+    closeModal($('#modal-menu'));
+  } catch (err) {
+    toast(err.message, 4000);
+  }
+}
+$('#menu-sub-en').addEventListener('change', (e) => replaceSub(e.target, 'subEn'));
+$('#menu-sub-uz').addEventListener('change', (e) => replaceSub(e.target, 'subUz'));
+
+$('#menu-save-title').addEventListener('click', async () => {
+  const t = $('#menu-title').value.trim();
+  if (t && S.cur) {
+    S.cur.title = t;
+    await db.updateVideo(S.cur.id, { title: t });
+    $('#player-title').textContent = t;
+  }
+  closeModal($('#modal-menu'));
+});
+
+// ================= Lug'at =================
+
+async function loadVocab() {
+  S.vocab = (await db.getAll('vocab')).sort((a, b) => b.createdAt - a.createdAt);
+  S.savedWords = new Set(S.vocab.filter((v) => !/\s/.test(v.word)).map((v) => normWord(v.word)));
+}
+
+const LVL_COLORS = ['var(--bad)', 'var(--warn)', '#c9d44a', 'var(--good)'];
+
+function highlightIn(sentence, word) {
+  const i = sentence.toLowerCase().indexOf(word.toLowerCase());
+  if (i < 0) return esc(sentence);
+  return esc(sentence.slice(0, i)) + '<b>' + esc(sentence.slice(i, i + word.length)) + '</b>' + esc(sentence.slice(i + word.length));
+}
+
+function renderVocab() {
+  const q = $('#vocab-search').value.trim().toLowerCase();
+  const items = S.vocab.filter((v) => !q || v.word.toLowerCase().includes(q) || v.translation.toLowerCase().includes(q));
+  $('#vocab-empty').classList.toggle('hidden', S.vocab.length > 0);
+  const learned = S.vocab.filter((v) => v.level >= 3).length;
+  $('#vocab-stats').textContent = S.vocab.length ? `Jami: ${S.vocab.length} ta · Oʻrganilgan: ${learned} ta` : '';
+  $('#vocab-list').innerHTML = items.map((v) => `
+    <div class="vitem" data-id="${v.id}">
+      <div class="vw"><span class="lvl" style="background:${LVL_COLORS[Math.min(3, v.level || 0)]}"></span>${esc(v.word)}</div>
+      <div class="vt">${esc(v.translation)}</div>
+      <div class="vbtns">
+        <button class="icon-btn" data-speak="${v.id}" title="Talaffuz"><svg><use href="#i-speaker"/></svg></button>
+        <button class="icon-btn" data-vdel="${v.id}" title="Oʻchirish"><svg><use href="#i-trash"/></svg></button>
+      </div>
+      ${v.sentence ? `<div class="vc">${highlightIn(v.sentence, v.word)}${v.sentenceTr ? `<br><span style="color:#d8c27a">${esc(v.sentenceTr)}</span>` : ''}</div>` : ''}
+      ${v.videoId && S.videos.some((x) => x.id === v.videoId) ? `<button class="vsrc" data-open="${v.id}">▶ ${esc(v.videoTitle)} · ${formatTime(v.time)}</button>` : ''}
+    </div>`).join('');
+}
+
+$('#vocab-search').addEventListener('input', renderVocab);
+
+$('#vocab-list').addEventListener('click', async (e) => {
+  const sp = e.target.closest('[data-speak]');
+  if (sp) {
+    const v = S.vocab.find((x) => x.id === sp.dataset.speak);
+    if (v) speak(v.word, 0.85).catch((err) => toast(err.message));
+    return;
+  }
+  const del = e.target.closest('[data-vdel]');
+  if (del) {
+    const v = S.vocab.find((x) => x.id === del.dataset.vdel);
+    if (v && confirm(`“${v.word}” lugʻatdan oʻchirilsinmi?`)) {
+      await db.del('vocab', v.id);
+      await loadVocab();
+      renderVocab();
+    }
+    return;
+  }
+  const op = e.target.closest('[data-open]');
+  if (op) {
+    const v = S.vocab.find((x) => x.id === op.dataset.open);
+    if (v) openPlayer(v.videoId, Math.max(0, v.time - 0.3));
+  }
+});
+
+// ---- Kartochkalar ----
+
+let deck = [];
+let deckPos = 0;
+
+$('#btn-review').addEventListener('click', () => {
+  if (!S.vocab.length) { toast('Lugʻat hali boʻsh'); return; }
+  // avval kam bilinadigan so'zlar, bir xil darajadagilar aralashtiriladi
+  deck = [...S.vocab]
+    .map((v) => ({ v, r: (v.level || 0) + Math.random() * 0.9 }))
+    .sort((a, b) => a.r - b.r)
+    .slice(0, 20)
+    .map((x) => x.v);
+  deckPos = 0;
+  openModal('#modal-cards');
+  showCard();
+});
+
+function showCard() {
+  if (deckPos >= deck.length) {
+    closeModal($('#modal-cards'));
+    toast('Takrorlash tugadi! 👏');
+    renderVocab();
+    return;
+  }
+  const v = deck[deckPos];
+  $('#card-progress').textContent = `${deckPos + 1} / ${deck.length}`;
+  $('#card-word').textContent = v.word;
+  $('#card-context').innerHTML = v.sentence ? highlightIn(v.sentence, v.word) : '';
+  $('#card-answer').textContent = v.translation;
+  $('#card-answer').classList.add('hidden');
+  $('#card-actions-show').classList.remove('hidden');
+  $('#card-actions-grade').classList.add('hidden');
+}
+
+$('#card-show').addEventListener('click', () => {
+  $('#card-answer').classList.remove('hidden');
+  $('#card-actions-show').classList.add('hidden');
+  $('#card-actions-grade').classList.remove('hidden');
+});
+$('#card-speak').addEventListener('click', () => {
+  const v = deck[deckPos];
+  if (v) speak(v.word, 0.85).catch((err) => toast(err.message));
+});
+
+async function grade(known) {
+  const v = deck[deckPos];
+  v.level = known ? Math.min(5, (v.level || 0) + 1) : 0;
+  v.reviewedAt = Date.now();
+  await db.put('vocab', v);
+  deckPos++;
+  showCard();
+}
+$('#card-yes').addEventListener('click', () => grade(true));
+$('#card-no').addEventListener('click', () => grade(false));
+
+// ================= Sozlamalar =================
+
+function applySettings() {
+  const root = document.documentElement.style;
+  root.setProperty('--sub-base', S.settings.fontSize + 'px');
+  root.setProperty('--sub-size', S.settings.fontSize + 'px');
+}
+
+async function renderSettings() {
+  const s = S.settings;
+  $('#set-font').value = s.fontSize;
+  $('#set-font-val').textContent = s.fontSize + 'px';
+  $('#set-speed').value = String(s.defaultSpeed);
+  $('#set-pause-tap').checked = s.pauseOnWordTap;
+  $('#set-autotr').checked = s.autoTranslateLine;
+  $('#set-listen-pause').checked = s.listenAutoPause;
+  $('#set-listen-hide').checked = s.listenHideSubs;
+  $('#set-sh-rep').value = String(s.shadowRepeats);
+  $('#set-sh-factor').value = String(s.shadowPauseFactor);
+  $('#set-sh-rec').checked = s.shadowAutoRecord;
+
+  let info = `${S.videos.length} ta video · ${S.vocab.length} ta soʻz`;
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      const mb = (x) => (x / 1048576).toFixed(0) + ' MB';
+      info += ` · Band: ${mb(est.usage || 0)}` + (est.quota ? ` / ${mb(est.quota)}` : '');
+    }
+  } catch (_) { /* ixtiyoriy */ }
+  $('#storage-info').textContent = info;
+}
+
+function bindSetting(sel, key, parse, ev = 'change') {
+  $(sel).addEventListener(ev, (e) => {
+    const el = e.target;
+    S.settings[key] = parse(el);
+    db.saveSettings(S.settings);
+    applySettings();
+    if (key === 'fontSize') $('#set-font-val').textContent = S.settings.fontSize + 'px';
+  });
+}
+bindSetting('#set-font', 'fontSize', (el) => +el.value, 'input');
+bindSetting('#set-speed', 'defaultSpeed', (el) => +el.value);
+bindSetting('#set-pause-tap', 'pauseOnWordTap', (el) => el.checked);
+bindSetting('#set-autotr', 'autoTranslateLine', (el) => el.checked);
+bindSetting('#set-listen-pause', 'listenAutoPause', (el) => el.checked);
+bindSetting('#set-listen-hide', 'listenHideSubs', (el) => el.checked);
+bindSetting('#set-sh-rep', 'shadowRepeats', (el) => +el.value);
+bindSetting('#set-sh-factor', 'shadowPauseFactor', (el) => +el.value);
+bindSetting('#set-sh-rec', 'shadowAutoRecord', (el) => el.checked);
+
+$('#btn-clear-cache').addEventListener('click', async () => {
+  await db.clear('trcache');
+  toast('Tarjima keshi tozalandi');
+});
+
+// ================= Klaviatura (kompyuterda) =================
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { handleBack(); return; }
+  if (S.view !== 'player' || topModal()) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
+  switch (e.key) {
+    case ' ': e.preventDefault(); togglePlay(); break;
+    case 'ArrowLeft': e.preventDefault(); if (e.shiftKey) seekTo(video.currentTime - 5); else prevLine(); break;
+    case 'ArrowRight': e.preventDefault(); if (e.shiftKey) seekTo(video.currentTime + 5); else nextLine(); break;
+    case 'r': case 'R': replayLine(); break;
+    case 'l': case 'L': $('#c-loop').click(); break;
+    case 's': case 'S': $('#c-subs').click(); break;
+    case 'f': case 'F': $('#c-fs').click(); break;
+    default:
+  }
+});
+
+// ================= Ishga tushirish =================
+
+async function init() {
+  S.settings = await db.loadSettings();
+  applySettings();
+  db.requestPersistence();
+  await Promise.all([loadVideos(), loadVocab()]);
+  showView('library');
+
+  // Android "orqaga" tugmasi
+  const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (App && window.Capacitor.isNativePlatform()) {
+    App.addListener('backButton', () => {
+      if (!handleBack()) App.exitApp();
+    });
+    App.addListener('pause', () => { if (S.cur) saveProgress(true); });
+  }
+  window.addEventListener('pagehide', () => { if (S.cur) saveProgress(true); });
+}
+
+init().catch((err) => {
+  console.error(err);
+  toast('Ilovani ishga tushirishda xato: ' + err.message, 6000);
+});
+
+// Test va nosozliklarni tuzatish uchun
+window.__tilPlayer = { S, openPlayer, setMode, seekToCue };
