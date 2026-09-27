@@ -62,7 +62,126 @@ export async function readSubtitleFile(file) {
   }
   const cues = parseSubtitles(text);
   if (!cues.length) throw new Error('Subtitr faylidan birorta ham qator topilmadi (SRT yoki VTT boʻlishi kerak).');
+  splitBilingual(cues);
   return cues;
+}
+
+// ---------- Ikki tilli (inglizcha + o'zbekcha) subtitrlar ----------
+// Ko'p subtitrlarda har bir qatorda avval inglizcha, keyin o'zbekcha tarjima yoziladi:
+//   My name is Lisa.
+//   Mening ismim Lisa.
+// Quyidagi funksiyalar har bir qatorning tilini taxmin qilib, ularni ajratadi.
+
+const EN_WORDS = new Set((
+  'i you he she it we they me him her us them my your his its our their mine yours the a an '
+  + 'is are was were be been being am do does did done have has had will would can could should shall may might must '
+  + 'not no yes to of in on at for with from by about as into onto and or but if so that this these those '
+  + 'what who whom why where when how which there here all any some just now then than too very more most much many '
+  + 'one only also again still ever never always up out over off down away back before after '
+  + "i'm i've i'll i'd you're you've you'll it's that's there's let's don't doesn't didn't can't won't isn't aren't wasn't "
+  + "haven't hasn't wouldn't couldn't shouldn't he's she's we're they're what's "
+  + 'know want like get go going come see take make say said says tell think look need give let well oh yeah okay'
+).split(' '));
+
+const UZ_WORDS = new Set((
+  'va men sen siz u biz ular bu shu ushbu uchun bilan emas ha ham esa edi ekan emish kerak nima nega nimaga qanday '
+  + 'qayerda qayerga qachon hech endi agar ammo lekin biroq chunki deb dedi degan bir ikki meni seni sizni uni bizni '
+  + 'ularni mening sening sizning uning bizning ularning menga senga sizga unga bizga ularga mendan sizdan undan '
+  + 'bor yoʻq yana juda hamma hammasi barcha faqat albatta balki xoʻp mana ana iltimos rahmat kim hozir keyin oldin '
+  + 'yaxshi katta kichik qil qiling qildi boʻldi boʻladi kel keling ket keting ber bering ol oling'
+).split(' '));
+
+const UZ_SUFFIX = /(?:ning|larni|larga|lardan|larda|lar|dagi|moqda|moqchi|yapti|yapman|yapsiz|ganman|gansiz|adi|aydi|ydi|dingiz|ingiz|imiz|ishim|ishingiz|mizni|dan|ga|da|ni|ligi|lik|siz|miz|man)$/;
+
+function normApos(s) {
+  // o‘ g‘ oʻ gʻ o' g' — hammasini bitta shaklga keltiramiz
+  return s.toLowerCase().replace(/[‘’ʻʼ`´']/g, 'ʻ');
+}
+
+// Musbat — inglizcha, manfiy — o'zbekcha, 0 atrofida — noaniq (ism, undov va h.k.).
+export function langScore(line) {
+  const raw = line.replace(/\[[^\]]*\]/g, ' ').replace(/<[^>]+>/g, ' ');
+  let en = 0;
+  let uz = 0;
+  if (/[\u0400-\u04FF]/.test(raw)) uz += 3; // kirill yozuvi — o'zbekcha (kirill)
+  const toks = normApos(raw).match(/[a-zʻ\u0400-\u04FF]+/g) || [];
+  for (const t of toks) {
+    const w = t.replace(/^ʻ+|ʻ+$/g, '');
+    if (!w) continue;
+    const plain = w.replace(/ʻ/g, "'");
+    if (EN_WORDS.has(plain)) { en += 1; continue; }
+    if (UZ_WORDS.has(w)) { uz += 1; continue; }
+    // o'zbekcha o‘/g‘ harflari (inglizcha qisqartmalar — 's, 't, 'll, 'd, 've, 're, 'm — bundan mustasno)
+    if (/[og]ʻ(?!(?:s|t|ll|d|ve|re|m)$)[a-z]/.test(w) || /^[og]ʻ/.test(w)) { uz += 2; continue; }
+    if (/q(?!u)/.test(w)) { uz += 1; continue; }
+    if (/^(?:th|wh)/.test(w) || /(?:tion|ness|ould|ight|ing|ed)$/.test(w)) { en += 0.5; continue; }
+    if (w.length > 3 && UZ_SUFFIX.test(w)) uz += 0.6;
+  }
+  return en - uz;
+}
+
+function bestSplit(scores, enFirst) {
+  const n = scores.length;
+  let best = Math.ceil(n / 2);
+  let bestVal = -Infinity;
+  for (let k = 1; k < n; k++) {
+    let v = 0;
+    for (let i = 0; i < n; i++) v += (i < k ? 1 : -1) * scores[i];
+    if (!enFirst) v = -v;
+    const tieBetter = v === bestVal && Math.abs(k - n / 2) < Math.abs(best - n / 2);
+    if (v > bestVal || tieBetter) { bestVal = v; best = k; }
+  }
+  return best;
+}
+
+// Fayl ikki tillimi — aniqlaydi. 'en-uz', 'uz-en' yoki null qaytaradi.
+export function detectBilingual(cues) {
+  const multi = cues.filter((c) => c.text.includes('\n'));
+  if (multi.length < 3 || multi.length < cues.length * 0.5) return null;
+  let enFirst = 0;
+  let uzFirst = 0;
+  for (const c of multi) {
+    const lines = c.text.split('\n');
+    const a = langScore(lines[0]);
+    const b = langScore(lines[lines.length - 1]);
+    if (a > 0 && b < 0) enFirst++;
+    else if (a < 0 && b > 0) uzFirst++;
+  }
+  const need = Math.max(3, multi.length * 0.25);
+  if (enFirst >= need && enFirst > uzFirst * 3) return 'en-uz';
+  if (uzFirst >= need && uzFirst > enFirst * 3) return 'uz-en';
+  return null;
+}
+
+// Ikki tilli bo'lsa: cue.text — faqat inglizcha, cue.uz — o'zbekcha tarjima.
+export function splitBilingual(cues) {
+  if (cues.some((c) => c.uz)) return 'en-uz';
+  const order = detectBilingual(cues);
+  if (!order) return null;
+  const enFirst = order === 'en-uz';
+  for (const c of cues) {
+    const lines = c.text.split('\n');
+    if (lines.length < 2) continue; // tarjimasiz qator
+    const k = bestSplit(lines.map(langScore), enFirst);
+    const first = lines.slice(0, k);
+    const second = lines.slice(k);
+    const en = enFirst ? first : second;
+    const uz = enFirst ? second : first;
+    c.text = en.join('\n');
+    // o'zbekcha qatorlar odatda shunchaki uzun gap bo'lingan joy — bitta qatorga qo'shamiz
+    c.uz = uz.join(' ');
+  }
+  return order;
+}
+
+// Faqat tovush effekti / izoh: "[wind rushing]", "(laughs)", "♪"
+export function isSfx(cue) {
+  return !/[A-Za-z0-9]/.test(cue.text.replace(/\[[^\]]*\]|\([^)]*\)|[♪♫]/g, ''));
+}
+
+// Diktant va talaffuz uchun: [izohlar], (izohlar) va ♪ belgilarsiz matn
+export function speechText(text) {
+  return text.replace(/\[[^\]]*\]|\([^)]*\)|[♪♫]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 const WORD_RE = /[A-Za-z0-9À-ɏ]+(?:['’][A-Za-zÀ-ɏ]+)*(?:-[A-Za-z0-9À-ɏ]+)*/g;

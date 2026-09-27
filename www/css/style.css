@@ -217,6 +217,7 @@ body.fs { --sub-size: calc(var(--sub-base, 20px) * 1.25); }
 .dict-result .miss { color: var(--bad); text-decoration: underline wavy; }
 .dict-result .extra { color: var(--muted); text-decoration: line-through; }
 .dict-result .score { font-weight: 700; margin-right: 6px; }
+.dict-uz, .sh-uz { color: #ffe08a; font-size: 14px; line-height: 1.4; margin-top: 4px; }
 
 .sh-line { font-size: 16px; line-height: 1.45; min-height: 24px; }
 .sh-line.big { color: var(--text); font-size: 17px; }
@@ -239,6 +240,16 @@ body.fs { --sub-size: calc(var(--sub-base, 20px) * 1.25); }
 .tl-tr { background: var(--bg3); border: 1px solid var(--line); border-radius: 8px; font-size: 11px; font-weight: 800; padding: 3px 6px; color: var(--muted); }
 .tl-uz { grid-column: 2 / 4; color: #ffe08a; font-size: 14px; line-height: 1.4; }
 .tl-uz:empty { display: none; }
+.tl.blurred .tl-uz { filter: blur(7px); }
+.tl.sfx .tl-text { color: var(--muted); font-size: 13px; font-style: italic; }
+.tl.sfx .tl-uz { font-size: 12px; opacity: 0.7; }
+.t-opts { display: flex; gap: 12px; }
+.sub-uzbtn {
+  pointer-events: auto; vertical-align: 2px; margin-left: 4px;
+  font: 800 11px/1 system-ui, sans-serif; padding: 3px 5px; border-radius: 5px;
+  background: rgba(255,224,138,0.9); color: #111; border: 0;
+}
+.sub-uz { cursor: pointer; }
 
 /* ---------- Modallar ---------- */
 .modal {
