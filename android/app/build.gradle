@@ -3,6 +3,8 @@ apply plugin: 'com.android.application'
 android {
     namespace = "uz.tilplayer.app"
     compileSdk = rootProject.ext.compileSdkVersion
+    // whisper.cpp (avtomatik subtitr) uchun C++ kompilyatori
+    ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId "uz.tilplayer.app"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -10,10 +12,25 @@ android {
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // Faqat 64-bit ARM telefonlar (deyarli barcha zamonaviy telefonlar)
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DCMAKE_BUILD_TYPE=Release", "-DANDROID_STL=c++_static"
+            }
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
         }
     }
     buildTypes {

@@ -4,6 +4,7 @@ import {
   detectLanguage, keepLanguageOnly,
 } from './subtitles.js';
 import { translate, overrideTranslation, googleTranslateLink } from './translate.js';
+import * as autosub from './autosub.js';
 import {
   speak, setOrientation, setSystemBarsHidden, VoiceRecorder,
 } from './media.js';
@@ -161,7 +162,7 @@ function renderLibrary() {
             <div class="title">${esc(v.title)}</div>
             <div class="meta">
               ${v.duration ? `<span class="badge">${formatTime(v.duration)}</span>` : ''}
-              ${v.subEn ? `<span class="badge">${LANG_CODE[v.lang || 'en']} ${v.subEn.length} gap</span>` : '<span class="badge" style="color:var(--warn)">Subtitr yoʻq</span>'}
+              ${v.subEn ? `<span class="badge">${LANG_CODE[v.lang || 'en']} ${v.subEn.length} gap${v.subAuto ? ' · avto' : ''}</span>` : '<span class="badge" style="color:var(--warn)">Subtitr yoʻq</span>'}
               ${pct ? `<span class="badge">${pct}%</span>` : ''}
             </div>
           </div>
@@ -678,7 +679,7 @@ $('#add-save').addEventListener('click', async () => {
     await Promise.all([loadVideos(), loadPlaylists()]);
     closeModal($('#modal-add'));
     renderLibrary();
-    toast(meta.subEn ? 'Video saqlandi' : 'Video saqlandi. Subtitrni keyinroq pleyer menyusidan qoʻshishingiz mumkin', 3500);
+    toast(meta.subEn ? 'Video saqlandi' : 'Video saqlandi. Subtitrni keyinroq pleyerdagi ⋮ menyusidan qoʻshish yoki avtomatik yaratish mumkin', 3500);
   } catch (err) {
     console.error(err);
     $('#add-status').textContent = 'Saqlab boʻlmadi: ' + (err && err.message ? err.message : err)
@@ -960,7 +961,7 @@ $('#c-subs').addEventListener('click', () => {
 function renderTranscript() {
   const tr = $('#transcript');
   if (!S.cues.length) {
-    tr.innerHTML = `<div class="empty small">Bu videoga subtitr qoʻshilmagan.<br>Yuqoridagi <b>⋮</b> menyusidan .srt yoki .vtt faylini qoʻshing.</div>`;
+    tr.innerHTML = `<div class="empty small">Bu videoga subtitr qoʻshilmagan.<br>Yuqoridagi <b>⋮</b> menyusidan .srt yoki .vtt faylini qoʻshing<br>yoki uni avtomatik yarating.<br><br><button class="btn primary" data-gen><svg><use href="#i-magic"/></svg>Subtitrni avtomatik yaratish</button></div>`;
     return;
   }
   tr.innerHTML = S.cues.map((c) => `
@@ -1003,6 +1004,7 @@ function highlightTranscript(forceScroll) {
 ['touchmove', 'wheel'].forEach((ev) => $('#transcript').addEventListener(ev, () => { S.userScrollAt = Date.now(); }, { passive: true }));
 
 $('#transcript').addEventListener('click', async (e) => {
+  if (e.target.closest('[data-gen]')) { openGen(); return; }
   const seek = e.target.closest('[data-seek]');
   if (seek) { seekToCue(+seek.dataset.seek); return; }
 
@@ -1577,6 +1579,164 @@ $('#menu-save-title').addEventListener('click', async () => {
   closeModal($('#modal-menu'));
 });
 
+// ================= Avtomatik subtitr (whisper.cpp, internetsiz) =================
+
+const GEN_STAGE = {
+  model: 'Model yuklab olinmoqda (bir marta)',
+  upload: 'Video tayyorlanmoqda',
+  audio: 'Ovoz ajratilmoqda',
+  asr: 'Nutq tanilmoqda',
+};
+
+let genJob = null; // { videoId, title, cancelled, stage, percent, asrStart }
+
+function openGen() {
+  if (!S.cur) return;
+  if (!autosub.isAvailable()) {
+    toast('Avtomatik subtitr faqat Android ilovasida ishlaydi', 3500);
+    return;
+  }
+  if (genJob) {
+    toast('Avtomatik subtitr allaqachon yaratilmoqda — tugashini kuting', 3000);
+    return;
+  }
+  closeModal($('#modal-menu'));
+  $('#gen-video').textContent = S.cur.title;
+  $('#gen-lang').value = S.lang || 'en';
+  $('#gen-warn').classList.toggle('hidden', !S.cues.length);
+  renderGenModels();
+  openModal('#modal-gen');
+}
+
+async function renderGenModels() {
+  const chosen = S.settings.genModel || autosub.DEFAULT_MODEL;
+  const rows = await Promise.all(autosub.MODELS.map(async (m) => {
+    const have = await autosub.isModelDownloaded(m.id).catch(() => false);
+    return `
+      <label class="check-row">
+        <input type="radio" name="gen-model" value="${m.id}" ${m.id === chosen ? 'checked' : ''}>
+        <span class="model-meta"><b>${m.label}</b><small>${m.size} · ${m.note}</small></span>
+        ${have ? '<span class="badge ok">✓ yuklangan</span>' : ''}
+      </label>`;
+  }));
+  $('#gen-models').innerHTML = rows.join('');
+}
+
+async function renderModelSettings() {
+  const box = $('#set-models');
+  if (!autosub.isAvailable()) {
+    box.innerHTML = '<p class="muted small">Faqat Android ilovasida ishlaydi.</p>';
+    return;
+  }
+  const rows = await Promise.all(autosub.MODELS.map(async (m) => {
+    const have = await autosub.isModelDownloaded(m.id).catch(() => false);
+    return `
+      <div class="check-row">
+        <span class="model-meta"><b>${m.label}</b><small>${m.size}</small></span>
+        ${have ? `<button class="btn sm" data-delmodel="${m.id}">Oʻchirish</button>` : '<small class="muted">yuklanmagan</small>'}
+      </div>`;
+  }));
+  box.innerHTML = rows.join('');
+}
+
+$('#set-models').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-delmodel]');
+  if (!b) return;
+  if (genJob) { toast('Avval joriy jarayon tugasin'); return; }
+  await autosub.deleteModel(b.dataset.delmodel);
+  toast('Model oʻchirildi');
+  renderModelSettings();
+});
+
+$('#menu-gen').addEventListener('click', openGen);
+
+$('#gen-start').addEventListener('click', () => {
+  const picked = $('#gen-models input:checked');
+  const model = picked ? picked.value : autosub.DEFAULT_MODEL;
+  const lang = $('#gen-lang').value;
+  S.settings.genModel = model;
+  db.saveSettings(S.settings);
+  closeModal($('#modal-gen'));
+  runGeneration(S.cur.id, S.cur.title, lang, model);
+});
+
+function showGen() {
+  const bar = $('#gen-bar');
+  if (!genJob) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  const pct = Math.max(0, Math.min(100, genJob.percent || 0));
+  let text = `${GEN_STAGE[genJob.stage] || ''}… ${pct}%`;
+  // taxminiy qolgan vaqt (nutqni tanish bosqichida)
+  if (genJob.stage === 'asr' && pct >= 3 && genJob.asrStart) {
+    const spent = (Date.now() - genJob.asrStart) / 1000;
+    const left = Math.round((spent / pct) * (100 - pct) / 60);
+    text += left >= 1 ? ` · ~${left} daq qoldi` : ' · 1 daqiqadan kam qoldi';
+  }
+  $('#gen-text').textContent = `${text} — ${genJob.title}`;
+  $('#gen-fill').style.width = pct + '%';
+}
+
+function setGenStage(stage, percent) {
+  if (!genJob) return;
+  if (stage === 'asr' && genJob.stage !== 'asr') genJob.asrStart = Date.now();
+  genJob.stage = stage;
+  genJob.percent = percent < 0 ? 0 : percent;
+  showGen();
+}
+
+$('#gen-cancel').addEventListener('click', async () => {
+  if (!genJob || !confirm('Avtomatik subtitr yaratish toʻxtatilsinmi?')) return;
+  genJob.cancelled = true;
+  $('#gen-text').textContent = 'Toʻxtatilmoqda…';
+  await autosub.cancel().catch(() => {});
+});
+
+async function runGeneration(videoId, title, lang, model) {
+  genJob = { videoId, title, cancelled: false, stage: 'upload', percent: 0 };
+  showGen();
+  const isCancelled = () => !genJob || genJob.cancelled;
+  try {
+    const support = await autosub.checkSupport();
+    if (!support.supported) {
+      throw new Error('Bu telefonda avtomatik subtitr ishlamaydi (faqat 64-bitli ARM telefonlar qoʻllab-quvvatlanadi).');
+    }
+    if (!(await autosub.isModelDownloaded(model))) {
+      setGenStage('model', 0);
+      await autosub.downloadModel(model, (p) => setGenStage('model', p));
+    }
+    if (isCancelled()) throw Object.assign(new Error('cancelled'), { code: 'CANCELLED' });
+
+    const blob = await db.get('blobs', videoId);
+    if (!blob) throw new Error('Video fayli topilmadi');
+    setGenStage('upload', 0);
+    await autosub.uploadVideo(blob, (p) => setGenStage('upload', p), isCancelled);
+
+    setGenStage('audio', 0);
+    const cues = await autosub.transcribe({ model, language: lang }, (stage, p) => setGenStage(stage, p));
+    if (!cues.length) throw new Error('Videoda nutq topilmadi.');
+
+    await db.updateVideo(videoId, { subEn: cues, lang, offset: 0, subAuto: true });
+    await loadVideos();
+    if (S.cur && S.cur.id === videoId) {
+      S.cues = cues;
+      S.offset = 0;
+      S.revealed = new Set();
+      setLang(lang);
+      renderTranscript();
+      S.activeIdx = -2;
+      tick(true);
+    }
+    if (S.view === 'library') renderLibrary();
+    toast(`Subtitr tayyor: ${cues.length} ta gap — “${title}”`, 5000);
+  } catch (err) {
+    if (err && (err.code === 'CANCELLED' || err.message === 'cancelled')) toast('Avtomatik subtitr toʻxtatildi');
+    else toast('Subtitr yaratib boʻlmadi: ' + ((err && err.message) || err), 7000);
+  } finally {
+    genJob = null;
+    showGen();
+  }
+}
+
 // ================= Lug'at =================
 
 async function loadVocab() {
@@ -1708,6 +1868,7 @@ async function renderSettings() {
   $('#set-speed').value = String(s.defaultSpeed);
   $('#set-pause-tap').checked = s.pauseOnWordTap;
   $('#set-autotr').checked = s.autoTranslateLine;
+  renderModelSettings();
   $('#set-autonext').checked = s.autoplayNext;
   $('#set-listen-pause').checked = s.listenAutoPause;
   $('#set-listen-hide').checked = s.listenHideSubs;

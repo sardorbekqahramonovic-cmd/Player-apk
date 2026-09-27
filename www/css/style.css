@@ -192,6 +192,27 @@ body.in-player .bottom-nav { display: none; }
 #add-playlist-new { margin-top: 8px; }
 .stage-status u { margin-left: 6px; color: var(--accent2); }
 
+/* ---------- Avtomatik subtitr ---------- */
+.gen-bar {
+  flex: none; margin: calc(8px + var(--safe-top)) 12px 0; position: relative; z-index: 6;
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px;
+  background: #1d2433; border: 1px solid var(--accent); box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+}
+.gen-bar > svg { color: var(--accent2); }
+.gen-body { flex: 1; min-width: 0; }
+.gen-text { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gen-track { height: 5px; border-radius: 3px; background: var(--bg3); margin-top: 6px; overflow: hidden; }
+.gen-track i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
+.gen-bar .btn { min-height: 34px; padding: 4px 10px; }
+body.fs .gen-bar { display: none; }
+.gen-btn { width: 100%; margin-top: 12px; }
+.gen-video { margin-top: 10px; font-weight: 600; }
+.warn { color: var(--warn); }
+.check-row .model-meta { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.check-row .model-meta small { color: var(--muted); }
+.badge.ok { color: var(--good); }
+.btn.sm { min-height: 30px; padding: 2px 8px; font-size: 12px; }
+
 /* ---------- Pleyer ---------- */
 .stage { position: relative; background: #000; flex: none; user-select: none; -webkit-user-select: none; }
 .vbox { position: relative; }

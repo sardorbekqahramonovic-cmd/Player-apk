@@ -92,19 +92,33 @@ export async function createPlaylist(name, items = []) {
 }
 
 export async function updatePlaylist(id, patch) {
-  const pl = await get('playlists', id);
-  if (!pl) return null;
-  Object.assign(pl, patch);
-  await put('playlists', pl);
-  return pl;
+  return patchRecord('playlists', id, patch);
+}
+
+// O'qish va yozish bitta tranzaksiyada — bir vaqtda kelgan yangilanishlar
+// (masalan, ijro joyini saqlash va subtitrni saqlash) bir-birini o'chirib yubormaydi.
+async function patchRecord(storeName, id, patch) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const s = tx.objectStore(storeName);
+    let result = null;
+    const req = s.get(id);
+    req.onsuccess = () => {
+      const v = req.result;
+      if (!v) return;
+      Object.assign(v, patch);
+      s.put(v);
+      result = v;
+    };
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
 }
 
 export async function updateVideo(id, patch) {
-  const v = await get('videos', id);
-  if (!v) return null;
-  Object.assign(v, patch);
-  await put('videos', v);
-  return v;
+  return patchRecord('videos', id, patch);
 }
 
 // --- Sozlamalar ---

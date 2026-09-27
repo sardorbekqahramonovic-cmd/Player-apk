@@ -29,8 +29,8 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          # eski 'tools' paketi endi mavjud emas; qolganini Gradle o'zi yuklaydi
-          packages: 'platform-tools'
+          # eski 'tools' paketi endi mavjud emas; NDK va CMake — avtomatik subtitr (whisper.cpp) uchun
+          packages: 'platform-tools ndk;27.2.12479018 cmake;3.22.1'
 
       - name: npm paketlarini o'rnatish
         run: npm ci

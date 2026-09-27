@@ -41,10 +41,20 @@
     <symbol id="i-list-plus" viewBox="0 0 24 24"><path d="M3 6h12M3 12h12M3 18h7M18 14v7M14.5 17.5h7"/></symbol>
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-magic" viewBox="0 0 24 24"><path d="M4 20L15 9M13 7l4 4"/><path d="M18 2v3M16.5 3.5h3M20 8v2M19 9h2M9 2v2M8 3h2"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
   </svg>
 
   <div id="app">
+    <div id="gen-bar" class="gen-bar hidden" role="status">
+      <svg><use href="#i-magic"/></svg>
+      <div class="gen-body">
+        <div id="gen-text" class="gen-text"></div>
+        <div class="gen-track"><i id="gen-fill"></i></div>
+      </div>
+      <button id="gen-cancel" class="btn">Bekor</button>
+    </div>
+
     <!-- KUTUBXONA -->
     <section id="view-library" class="view active">
       <header class="topbar">
@@ -114,6 +124,10 @@
           </select>
         </label>
         <label class="row">Pauza vaqtida ovozimni avtomatik yozib olish <input id="set-sh-rec" type="checkbox" class="switch"></label>
+
+        <h3>Avtomatik subtitr</h3>
+        <p class="muted small">Nutqni tanish modellari telefonda saqlanadi. Keraksizini oʻchirib joy boʻshatish mumkin.</p>
+        <div id="set-models" class="check-list"></div>
 
         <h3>Xotira</h3>
         <div id="storage-info" class="muted small"></div>
@@ -326,6 +340,29 @@
     </div>
   </div>
 
+  <!-- AVTOMATIK SUBTITR -->
+  <div id="modal-gen" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head"><h3>Avtomatik subtitr</h3><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+      <p class="muted small">Videodagi nutq telefonning oʻzida, <b>internetsiz</b> matnga aylantiriladi. Internet faqat birinchi marta modelni yuklab olish uchun kerak.</p>
+      <div id="gen-video" class="gen-video"></div>
+      <label class="field">Videodagi til
+        <select id="gen-lang" class="input">
+          <option value="en">Inglizcha</option>
+          <option value="ru">Ruscha</option>
+        </select>
+      </label>
+      <div class="field">Model</div>
+      <div id="gen-models" class="check-list"></div>
+      <p id="gen-warn" class="warn small hidden">Bu videoning hozirgi subtitri yangisi bilan almashtiriladi.</p>
+      <p class="muted small">Jarayon bir necha daqiqadan bir soatgacha davom etishi mumkin (video uzunligi va telefonga bogʻliq). Bu vaqtda ilovani yopmang — ekran oʻchmaydi. Boshqa videolarni koʻrishingiz mumkin.</p>
+      <div class="btn-row end">
+        <button class="btn" data-close>Bekor qilish</button>
+        <button id="gen-start" class="btn primary"><svg><use href="#i-magic"/></svg>Boshlash</button>
+      </div>
+    </div>
+  </div>
+
   <!-- PLEYER MENYUSI -->
   <div id="modal-menu" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-card">
@@ -335,6 +372,7 @@
         <input id="menu-sub-en" type="file">
         <span class="fp-name" id="menu-sub-en-name"></span>
       </label>
+      <button id="menu-gen" class="btn wide gen-btn"><svg><use href="#i-magic"/></svg>Subtitrni avtomatik yaratish</button>
       <label class="field">Subtitr tili (tarjima va talaffuz shu tildan boʻladi)
         <select id="menu-lang" class="input">
           <option value="en">Inglizcha</option>
