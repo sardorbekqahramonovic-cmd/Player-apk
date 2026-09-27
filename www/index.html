@@ -60,7 +60,7 @@
       <div id="library-empty" class="empty hidden">
         <svg class="empty-ic"><use href="#i-film"/></svg>
         <p><b>Hali video yoʻq.</b></p>
-        <p>Inglizcha video va uning subtitr faylini (.srt yoki .vtt) qoʻshing. Video ilovada saqlanadi — keyin istalgan payt davom ettirasiz.</p>
+        <p>Inglizcha yoki ruscha video va uning subtitr faylini (.srt yoki .vtt) qoʻshing. Video ilovada saqlanadi — keyin istalgan payt davom ettirasiz.</p>
         <button class="btn primary" data-action="add"><svg><use href="#i-plus"/></svg>Birinchi videoni qoʻshish</button>
       </div>
     </section>
@@ -123,7 +123,7 @@
 
         <h3>Qanday foydalaniladi?</h3>
         <div class="help">
-          <p><b>1. Video qoʻshing.</b> “Video qoʻshish” → video fayl (MP4 tavsiya etiladi) va inglizcha subtitr (.srt / .vtt).</p>
+          <p><b>1. Video qoʻshing.</b> “Video qoʻshish” → video fayl (MP4 tavsiya etiladi) va subtitr (.srt / .vtt) — inglizcha yoki ruscha. Til avtomatik aniqlanadi.</p>
           <p><b>2. Tomosha.</b> Subtitrdagi istalgan soʻzni bosing — oʻzbekcha tarjimasi, talaffuzi va lugʻat maʼnolari chiqadi. Gapdagi qoʻshni soʻzlarni belgilab, butun iborani tarjima qilish mumkin.</p>
           <p><b>3. Listening.</b> Subtitr yashiriladi, har gapdan keyin video toʻxtaydi. Qayta eshiting, eshitganingizni yozib tekshiring (diktant), keyin matnni oching.</p>
           <p><b>4. Shadowing.</b> Video har gapdan keyin toʻxtaydi va sizga takrorlash uchun vaqt beradi. Ovozingizni yozib, asl talaffuz bilan solishtiring.</p>
@@ -268,9 +268,16 @@
         <span class="fp-name" id="add-video-name">Tanlanmagan</span>
       </label>
       <label class="file-pick">
-        <span class="fp-label">2. Inglizcha subtitr (.srt / .vtt)</span>
+        <span class="fp-label">2. Subtitr (.srt / .vtt) — inglizcha yoki ruscha</span>
         <input id="add-sub-en" type="file">
         <span class="fp-name" id="add-sub-en-name">Tanlanmagan</span>
+      </label>
+      <label class="field">Subtitr tili
+        <select id="add-lang" class="input">
+          <option value="auto">Avtomatik aniqlash</option>
+          <option value="en">Inglizcha</option>
+          <option value="ru">Ruscha</option>
+        </select>
       </label>
       <label class="field">Nomi<input id="add-title" class="input" type="text" placeholder="Video nomi"></label>
       <label class="field">Playlistga qoʻshish (ixtiyoriy)
@@ -324,9 +331,15 @@
     <div class="modal-card">
       <div class="modal-head"><h3>Video sozlamalari</h3><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
       <label class="file-pick">
-        <span class="fp-label">Inglizcha subtitrni almashtirish</span>
+        <span class="fp-label">Subtitrni almashtirish</span>
         <input id="menu-sub-en" type="file">
         <span class="fp-name" id="menu-sub-en-name"></span>
+      </label>
+      <label class="field">Subtitr tili (tarjima va talaffuz shu tildan boʻladi)
+        <select id="menu-lang" class="input">
+          <option value="en">Inglizcha</option>
+          <option value="ru">Ruscha</option>
+        </select>
       </label>
       <div class="field">Subtitr sinxroni (kechiksa yoki oldinda boʻlsa)
         <div class="btn-row">

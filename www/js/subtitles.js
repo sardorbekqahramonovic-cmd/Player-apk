@@ -51,19 +51,59 @@ export function parseSubtitles(raw) {
   return cues;
 }
 
-// Fayl kodirovkasini taxmin qilish: avval UTF-8, bo'lmasa windows-1252.
-export async function readSubtitleFile(file) {
-  const buf = await file.arrayBuffer();
-  let text;
+// Fayl kodirovkasini taxmin qilish: UTF-16 (BOM bo'yicha), UTF-8,
+// ruscha fayllar uchun windows-1251, qolganlari uchun windows-1252.
+export function decodeSubtitle(buf) {
+  const b = new Uint8Array(buf);
+  if (b[0] === 0xFF && b[1] === 0xFE) return new TextDecoder('utf-16le').decode(buf);
+  if (b[0] === 0xFE && b[1] === 0xFF) return new TextDecoder('utf-16be').decode(buf);
   try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
-  } catch (_) {
-    text = new TextDecoder('windows-1252').decode(buf);
-  }
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch (_) { /* UTF-8 emas */ }
+  const cp1251 = new TextDecoder('windows-1251').decode(buf);
+  const cyr = (cp1251.match(/[А-яЁё]/g) || []).length;
+  const lat = (cp1251.match(/[A-Za-z]/g) || []).length;
+  if (cyr > lat * 0.3) return cp1251;
+  return new TextDecoder('windows-1252').decode(buf);
+}
+
+export async function readSubtitleFile(file) {
+  const text = decodeSubtitle(await file.arrayBuffer());
   const cues = parseSubtitles(text);
   if (!cues.length) throw new Error('Subtitr faylidan birorta ham qator topilmadi (SRT yoki VTT boʻlishi kerak).');
-  keepEnglishOnly(cues);
   return cues;
+}
+
+// Subtitr tili: kirill harflari ko'p bo'lsa — ruscha, aks holda inglizcha.
+// Faqat har bir gapning birinchi qatoriga qaraymiz: ikki tilli fayllarda
+// asosiy til yuqorida, o'zbekcha tarjima pastda bo'ladi.
+export function detectLanguage(cues) {
+  let cyr = 0;
+  let lat = 0;
+  for (const c of cues) {
+    const first = c.text.split('\n')[0].replace(/\[[^\]]*\]/g, '');
+    cyr += (first.match(/[Ѐ-ӿ]/g) || []).length;
+    lat += (first.match(/[A-Za-z]/g) || []).length;
+  }
+  return cyr > lat ? 'ru' : 'en';
+}
+
+// Faylda asosiy til ostida o'zbekcha tarjima qatorlari bo'lsa, ularni olib tashlaydi.
+export function keepLanguageOnly(cues, lang) {
+  if (lang === 'en') return keepEnglishOnly(cues);
+  // Ruscha: kirill qatorlar qoladi, lotin yozuvidagi (o'zbekcha) qatorlar tashlanadi
+  const isCyr = (l) => (l.match(/[Ѐ-ӿ]/g) || []).length > (l.match(/[A-Za-z]/g) || []).length;
+  const multi = cues.filter((c) => c.text.includes('\n'));
+  const mixed = multi.filter((c) => {
+    const lines = c.text.split('\n');
+    return lines.some(isCyr) && lines.some((l) => !isCyr(l) && /[A-Za-z]{2}/.test(l));
+  });
+  if (mixed.length < 3 || mixed.length < multi.length * 0.5) return false;
+  for (const c of cues) {
+    const kept = c.text.split('\n').filter((l) => isCyr(l) || !/[A-Za-z]{2}/.test(l));
+    if (kept.length) c.text = kept.join('\n');
+  }
+  return true;
 }
 
 // ---------- Faqat inglizcha matnni qoldirish ----------
@@ -168,7 +208,8 @@ export function keepEnglishOnly(cues) {
   return true;
 }
 
-const WORD_RE = /[A-Za-z0-9À-ɏ]+(?:['’][A-Za-zÀ-ɏ]+)*(?:-[A-Za-z0-9À-ɏ]+)*/g;
+// Lotin va kirill (rus) harflari
+const WORD_RE = /[A-Za-z0-9À-ɏЀ-ӿ]+(?:['’][A-Za-zÀ-ɏЀ-ӿ]+)*(?:-[A-Za-z0-9À-ɏЀ-ӿ]+)*/g;
 
 // Matnni [{t: 'so'z', w: true}, {t: ', ', w: false}, ...] ko'rinishiga keltiradi.
 export function tokenize(text) {
@@ -206,7 +247,7 @@ export function activeCueAt(cues, t) {
 
 // Diktant tekshiruvi: foydalanuvchi yozgan matnni asl gap bilan so'zma-so'z solishtirish (LCS).
 export function compareDictation(original, typed) {
-  const norm = (w) => w.toLowerCase().replace(/’/g, "'");
+  const norm = (w) => w.toLowerCase().replace(/’/g, "'").replace(/ё/g, 'е');
   const a = words(original);
   const b = words(typed).map(norm);
   const an = a.map(norm);

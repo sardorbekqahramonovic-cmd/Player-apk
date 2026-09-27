@@ -8,19 +8,24 @@ function nativePlugin(name) {
   return null;
 }
 
-export async function speak(text, rate = 0.9) {
+const TTS_LANG = { en: 'en-US', ru: 'ru-RU' };
+
+// lang — 'en' yoki 'ru'
+export async function speak(text, rate = 0.9, lang = 'en') {
+  const locale = TTS_LANG[lang] || 'en-US';
   const tts = nativePlugin('TextToSpeech');
   if (tts) {
     try { await tts.stop(); } catch (_) { /* e'tiborsiz */ }
-    return tts.speak({ text, lang: 'en-US', rate, pitch: 1.0, volume: 1.0, category: 'playback' });
+    return tts.speak({ text, lang: locale, rate, pitch: 1.0, volume: 1.0, category: 'playback' });
   }
   if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'en-US';
+    u.lang = locale;
     u.rate = rate;
-    const voice = speechSynthesis.getVoices().find((v) => /^en[-_]US/i.test(v.lang))
-      || speechSynthesis.getVoices().find((v) => /^en/i.test(v.lang));
+    const voices = speechSynthesis.getVoices();
+    const voice = voices.find((v) => v.lang.replace('_', '-').toLowerCase() === locale.toLowerCase())
+      || voices.find((v) => v.lang.toLowerCase().startsWith(lang));
     if (voice) u.voice = voice;
     speechSynthesis.speak(u);
     return;

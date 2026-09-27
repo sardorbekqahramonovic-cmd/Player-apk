@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import {
   readSubtitleFile, tokenize, cueIndexAt, activeCueAt, compareDictation, formatTime, words,
-  keepEnglishOnly,
+  detectLanguage, keepLanguageOnly,
 } from './subtitles.js';
 import { translate, overrideTranslation, googleTranslateLink } from './translate.js';
 import {
@@ -13,7 +13,13 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 const SPEEDS = [0.5, 0.6, 0.75, 0.85, 1, 1.25, 1.5];
 const SUB_MODES = ['en', 'en+uz', 'hidden', 'off'];
-const SUB_LABEL = { en: 'EN', 'en+uz': 'EN+UZ', hidden: 'Yashirin', off: 'Oʻchiq' };
+const LANG_CODE = { en: 'EN', ru: 'RU' };
+const LANG_NAME = { en: 'inglizcha', ru: 'ruscha' };
+// 'en' va 'en+uz' — "asl til" va "asl til + o'zbekcha" rejimlari (til videoga qarab)
+function subLabel(m) {
+  const code = LANG_CODE[S.lang] || 'EN';
+  return { en: code, 'en+uz': code + '+UZ', hidden: 'Yashirin', off: 'Oʻchiq' }[m];
+}
 
 const S = {
   settings: null,
@@ -30,6 +36,7 @@ const S = {
   cur: null,
   objectUrl: null,
   cues: [],
+  lang: 'en', // joriy video subtitri tili
   offset: 0,
   mode: 'watch',
   subMode: 'en',
@@ -154,7 +161,7 @@ function renderLibrary() {
             <div class="title">${esc(v.title)}</div>
             <div class="meta">
               ${v.duration ? `<span class="badge">${formatTime(v.duration)}</span>` : ''}
-              ${v.subEn ? `<span class="badge">EN ${v.subEn.length} gap</span>` : '<span class="badge" style="color:var(--warn)">Subtitr yoʻq</span>'}
+              ${v.subEn ? `<span class="badge">${LANG_CODE[v.lang || 'en']} ${v.subEn.length} gap</span>` : '<span class="badge" style="color:var(--warn)">Subtitr yoʻq</span>'}
               ${pct ? `<span class="badge">${pct}%</span>` : ''}
             </div>
           </div>
@@ -546,10 +553,12 @@ video.addEventListener('play', cancelAutoNext);
 
 // ---- Video qo'shish ----
 
-const addForm = { video: null, en: null };
+const addForm = { video: null, en: null, lang: 'en', subFile: null };
 
 function resetAddForm() {
-  addForm.video = addForm.en = null;
+  addForm.video = addForm.en = addForm.subFile = null;
+  addForm.lang = 'en';
+  $('#add-lang').value = 'auto';
   ['#add-video', '#add-sub-en'].forEach((s) => { $(s).value = ''; });
   $('#add-video-name').textContent = 'Tanlanmagan';
   $('#add-sub-en-name').textContent = 'Tanlanmagan';
@@ -575,12 +584,17 @@ $('#add-video').addEventListener('change', (e) => {
 });
 
 async function pickSub(input, nameEl, key) {
-  const f = input.files[0];
+  const f = input.files[0] || addForm.subFile;
   if (!f) return;
   try {
     const cues = await readSubtitleFile(f);
+    const choice = $('#add-lang').value;
+    const lang = choice === 'auto' ? detectLanguage(cues) : choice;
+    keepLanguageOnly(cues, lang); // ostidagi o'zbekcha tarjima qatorlarini olib tashlash
     addForm[key] = cues;
-    $(nameEl).textContent = `${f.name} — ${cues.length} ta gap`;
+    addForm.lang = lang;
+    addForm.subFile = f;
+    $(nameEl).textContent = `${f.name} — ${cues.length} ta gap (${LANG_NAME[lang]})`;
   } catch (err) {
     addForm[key] = null;
     input.value = '';
@@ -588,7 +602,9 @@ async function pickSub(input, nameEl, key) {
     toast(err.message, 4000);
   }
 }
-$('#add-sub-en').addEventListener('change', (e) => pickSub(e.target, '#add-sub-en-name', 'en'));
+$('#add-sub-en').addEventListener('change', (e) => { addForm.subFile = null; pickSub(e.target, '#add-sub-en-name', 'en'); });
+// Tilni qo'lda o'zgartirsa — tanlangan faylni qayta o'qiymiz
+$('#add-lang').addEventListener('change', () => { if (addForm.subFile) pickSub($('#add-sub-en'), '#add-sub-en-name', 'en'); });
 
 function makeThumbnail(file) {
   return new Promise((resolve) => {
@@ -643,6 +659,7 @@ $('#add-save').addEventListener('click', async () => {
       thumb: thumb || null,
       duration: duration || 0,
       subEn: addForm.en,
+      lang: addForm.en ? addForm.lang : 'en',
       offset: 0,
       lastTime: 0,
       createdAt: Date.now(),
@@ -687,8 +704,9 @@ async function openPlayer(id, atTime, opts = {}) {
   S.objectUrl = URL.createObjectURL(blob);
   S.cur = meta;
   S.cues = meta.subEn || [];
-  // Subtitrda o'zbekcha tarjima qatorlari bo'lsa — faqat inglizchasini qoldiramiz
-  if (keepEnglishOnly(S.cues)) db.updateVideo(id, { subEn: S.cues });
+  S.lang = meta.lang || 'en';
+  // Subtitrda o'zbekcha tarjima qatorlari bo'lsa — faqat asl tildagisini qoldiramiz
+  if (keepLanguageOnly(S.cues, S.lang)) db.updateVideo(id, { subEn: S.cues });
   S.offset = meta.offset || 0;
   S.activeIdx = -1;
   S.playIdx = -1;
@@ -899,7 +917,6 @@ function renderOverlay() {
   if (S.subMode === 'off') {
     en.innerHTML = '';
     uz.textContent = '';
-    // o'zbekcha subtitr bo'lsa-yu, inglizchasi bo'lmasa ham ko'rsatmaymiz
     return;
   }
   if (idx < 0) {
@@ -916,7 +933,7 @@ function renderOverlay() {
   uz.textContent = '';
   const wantUz = S.subMode === 'en+uz' || (S.settings.autoTranslateLine && !hidden && S.subMode === 'en');
   if (wantUz && !hidden) {
-    translate(cue.text).then((r) => {
+    translate(cue.text, S.lang).then((r) => {
       if (S.activeIdx === idx) uz.textContent = r.text;
     }).catch(() => {});
   }
@@ -925,7 +942,7 @@ function renderOverlay() {
 function setSubMode(m) {
   S.subMode = m;
   const b = $('#c-subs');
-  $('span', b).textContent = SUB_LABEL[m];
+  $('span', b).textContent = subLabel(m);
   b.classList.toggle('off', m === 'off');
   if ($('#l-hide')) $('#l-hide').checked = m === 'hidden';
   renderOverlay();
@@ -935,7 +952,7 @@ function setSubMode(m) {
 $('#c-subs').addEventListener('click', () => {
   const next = SUB_MODES[(SUB_MODES.indexOf(S.subMode) + 1) % SUB_MODES.length];
   setSubMode(next);
-  toast('Subtitr: ' + SUB_LABEL[next], 1200);
+  toast('Subtitr: ' + subLabel(next), 1200);
 });
 
 // ---- Transcript ----
@@ -943,7 +960,7 @@ $('#c-subs').addEventListener('click', () => {
 function renderTranscript() {
   const tr = $('#transcript');
   if (!S.cues.length) {
-    tr.innerHTML = `<div class="empty small">Bu videoga inglizcha subtitr qoʻshilmagan.<br>Yuqoridagi <b>⋮</b> menyusidan .srt yoki .vtt faylini qoʻshing.</div>`;
+    tr.innerHTML = `<div class="empty small">Bu videoga subtitr qoʻshilmagan.<br>Yuqoridagi <b>⋮</b> menyusidan .srt yoki .vtt faylini qoʻshing.</div>`;
     return;
   }
   tr.innerHTML = S.cues.map((c) => `
@@ -996,7 +1013,7 @@ $('#transcript').addEventListener('click', async (e) => {
     if (out.textContent) { out.textContent = ''; return; }
     out.textContent = 'Tarjima qilinmoqda…';
     try {
-      out.textContent = (await translate(S.cues[i].text)).text;
+      out.textContent = (await translate(S.cues[i].text, S.lang)).text;
     } catch (err) {
       out.textContent = err.message;
     }
@@ -1227,7 +1244,7 @@ function renderShadowLine() {
   const el = $('#sh-line');
   const i = S.playIdx >= 0 ? S.playIdx : 0;
   if (!S.cues.length) {
-    el.textContent = 'Shadowing uchun inglizcha subtitr kerak.';
+    el.textContent = 'Shadowing uchun subtitr kerak.';
     return;
   }
   el.classList.add('big');
@@ -1381,7 +1398,7 @@ async function updateSelection() {
   });
   const text = selectionText();
   $('#w-word').textContent = text;
-  $('#w-google').href = googleTranslateLink(text);
+  $('#w-google').href = googleTranslateLink(text, S.lang);
   const trEl = $('#w-trans');
   trEl.className = 'w-trans loading';
   trEl.textContent = 'Tarjima qilinmoqda…';
@@ -1397,7 +1414,7 @@ async function updateSelection() {
   // Bitta so'z bo'lsa kichik harf bilan so'raymiz (Google lug'at ma'nolarini shunda beradi)
   const query = w.from === w.to ? text.toLowerCase() : text;
   try {
-    const r = await translate(query);
+    const r = await translate(query, S.lang);
     if (req !== wordReq) return;
     trEl.className = 'w-trans';
     trEl.textContent = r.text;
@@ -1428,11 +1445,11 @@ $('#w-chips').addEventListener('click', (e) => {
 });
 
 $('#w-speak').addEventListener('click', () => {
-  speak(selectionText(), 0.85).catch((err) => toast(err.message));
+  speak(selectionText(), 0.85, S.lang).catch((err) => toast(err.message));
 });
 $('#w-sent-speak').addEventListener('click', () => {
   if (!S.word) return;
-  speak(S.word.cue.text.replace(/\n/g, ' '), 0.85).catch((err) => toast(err.message));
+  speak(S.word.cue.text.replace(/\n/g, ' '), 0.85, S.lang).catch((err) => toast(err.message));
 });
 
 $('#w-sent-btn').addEventListener('click', async () => {
@@ -1441,7 +1458,7 @@ $('#w-sent-btn').addEventListener('click', async () => {
   el.classList.add('loading');
   el.textContent = 'Tarjima qilinmoqda…';
   try {
-    const r = await translate(S.word.cue.text.replace(/\n/g, ' '));
+    const r = await translate(S.word.cue.text.replace(/\n/g, ' '), S.lang);
     el.classList.remove('loading');
     el.textContent = r.text;
     S.word.sentTr = r.text;
@@ -1457,7 +1474,7 @@ $('#w-save').addEventListener('click', async () => {
   if (!translation) { toast('Tarjimani yozing'); $('#w-edit').focus(); return; }
   const existing = S.vocab.find((v) => normWord(v.word) === normWord(word));
   const cached = $('#w-trans').classList.contains('error') ? null : $('#w-trans').textContent;
-  if (cached && translation !== cached) overrideTranslation(word.toLowerCase(), translation).catch(() => {});
+  if (cached && translation !== cached) overrideTranslation(word.toLowerCase(), translation, S.lang).catch(() => {});
   const item = {
     ...(existing || {}),
     id: existing ? existing.id : db.uid(),
@@ -1468,6 +1485,7 @@ $('#w-save').addEventListener('click', async () => {
     videoId: S.cur ? S.cur.id : null,
     videoTitle: S.cur ? S.cur.title : '',
     time: S.word.cue.start,
+    lang: S.lang,
     level: existing ? existing.level : 0,
     createdAt: existing ? existing.createdAt : Date.now(),
   };
@@ -1493,7 +1511,8 @@ function onSheetClosed() {
 
 $('#btn-player-menu').addEventListener('click', () => {
   if (!S.cur) return;
-  $('#menu-sub-en-name').textContent = S.cues.length ? `${S.cues.length} ta gap yuklangan` : 'Yoʻq — fayl tanlang';
+  $('#menu-sub-en-name').textContent = S.cues.length ? `${S.cues.length} ta gap yuklangan (${LANG_NAME[S.lang]})` : 'Yoʻq — fayl tanlang';
+  $('#menu-lang').value = S.lang;
   $('#menu-title').value = S.cur.title;
   updateOffsetLabel();
   openModal('#modal-menu');
@@ -1517,19 +1536,36 @@ async function replaceSub(input) {
   if (!f || !S.cur) return;
   try {
     const cues = await readSubtitleFile(f);
-    await db.updateVideo(S.cur.id, { subEn: cues });
+    const lang = detectLanguage(cues);
+    keepLanguageOnly(cues, lang);
+    await db.updateVideo(S.cur.id, { subEn: cues, lang });
     S.cues = cues;
+    setLang(lang);
     S.revealed = new Set();
     renderTranscript();
     S.activeIdx = -2;
     tick(true);
-    toast(`Subtitr yuklandi: ${cues.length} ta gap`);
+    toast(`Subtitr yuklandi: ${cues.length} ta gap (${LANG_NAME[lang]})`);
     closeModal($('#modal-menu'));
   } catch (err) {
     toast(err.message, 4000);
   }
 }
 $('#menu-sub-en').addEventListener('change', (e) => replaceSub(e.target));
+
+function setLang(lang) {
+  S.lang = lang;
+  if (S.cur) S.cur.lang = lang;
+  setSubMode(S.subMode); // CC yorlig'i: EN / RU
+}
+
+$('#menu-lang').addEventListener('change', async (e) => {
+  if (!S.cur) return;
+  setLang(e.target.value);
+  await db.updateVideo(S.cur.id, { lang: S.lang });
+  $('#menu-sub-en-name').textContent = S.cues.length ? `${S.cues.length} ta gap yuklangan (${LANG_NAME[S.lang]})` : 'Yoʻq — fayl tanlang';
+  toast(`Subtitr tili: ${LANG_NAME[S.lang]}`, 1600);
+});
 
 $('#menu-save-title').addEventListener('click', async () => {
   const t = $('#menu-title').value.trim();
@@ -1564,7 +1600,7 @@ function renderVocab() {
   $('#vocab-stats').textContent = S.vocab.length ? `Jami: ${S.vocab.length} ta · Oʻrganilgan: ${learned} ta` : '';
   $('#vocab-list').innerHTML = items.map((v) => `
     <div class="vitem" data-id="${v.id}">
-      <div class="vw"><span class="lvl" style="background:${LVL_COLORS[Math.min(3, v.level || 0)]}"></span>${esc(v.word)}</div>
+      <div class="vw"><span class="lvl" style="background:${LVL_COLORS[Math.min(3, v.level || 0)]}"></span>${esc(v.word)}${v.lang === 'ru' ? ' <span class="badge">RU</span>' : ''}</div>
       <div class="vt">${esc(v.translation)}</div>
       <div class="vbtns">
         <button class="icon-btn" data-speak="${v.id}" title="Talaffuz"><svg><use href="#i-speaker"/></svg></button>
@@ -1581,7 +1617,7 @@ $('#vocab-list').addEventListener('click', async (e) => {
   const sp = e.target.closest('[data-speak]');
   if (sp) {
     const v = S.vocab.find((x) => x.id === sp.dataset.speak);
-    if (v) speak(v.word, 0.85).catch((err) => toast(err.message));
+    if (v) speak(v.word, 0.85, v.lang || 'en').catch((err) => toast(err.message));
     return;
   }
   const del = e.target.closest('[data-vdel]');
@@ -1643,7 +1679,7 @@ $('#card-show').addEventListener('click', () => {
 });
 $('#card-speak').addEventListener('click', () => {
   const v = deck[deckPos];
-  if (v) speak(v.word, 0.85).catch((err) => toast(err.message));
+  if (v) speak(v.word, 0.85, v.lang || 'en').catch((err) => toast(err.message));
 });
 
 async function grade(known) {

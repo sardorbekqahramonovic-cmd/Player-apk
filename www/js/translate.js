@@ -34,8 +34,8 @@ async function fetchJson(url) {
   return typeof data === 'string' ? JSON.parse(data) : data;
 }
 
-async function viaGoogle(text) {
-  const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=uz&hl=uz'
+async function viaGoogle(text, from) {
+  const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + from + '&tl=uz&hl=uz'
     + '&dt=t&dt=bd&dj=1&q=' + encodeURIComponent(text);
   const data = await fetchJson(url);
   const main = (data.sentences || []).map((s) => s.trans || '').join('').trim();
@@ -47,8 +47,8 @@ async function viaGoogle(text) {
   return { text: main, dict, source: 'Google' };
 }
 
-async function viaMyMemory(text) {
-  const url = 'https://api.mymemory.translated.net/get?langpair=en|uz&q=' + encodeURIComponent(text);
+async function viaMyMemory(text, from) {
+  const url = 'https://api.mymemory.translated.net/get?langpair=' + from + '|uz&q=' + encodeURIComponent(text);
   const data = await fetchJson(url);
   const main = data && data.responseData && data.responseData.translatedText;
   if (!main || /MYMEMORY WARNING|INVALID/i.test(main)) throw new Error('empty');
@@ -57,10 +57,17 @@ async function viaMyMemory(text) {
 
 const inflight = new Map();
 
-export async function translate(text) {
+// Kesh kaliti: inglizcha uchun eskicha (faqat matn), boshqa tillar uchun "ru:matn"
+function cacheKey(text, from) {
+  const k = text.trim().toLowerCase();
+  return from === 'en' ? k : from + ':' + k;
+}
+
+// from — asl til: 'en' (inglizcha) yoki 'ru' (ruscha)
+export async function translate(text, from = 'en') {
   const src = text.trim();
   if (!src) return { text: '', dict: [] };
-  const key = src.toLowerCase();
+  const key = cacheKey(src, from);
 
   const cached = await db.get('trcache', key).catch(() => null);
   if (cached) return { ...cached, cached: true };
@@ -71,7 +78,7 @@ export async function translate(text) {
     let lastErr;
     for (const provider of [viaGoogle, viaMyMemory]) {
       try {
-        const r = await provider(src);
+        const r = await provider(src, from);
         db.put('trcache', r, key).catch(() => {});
         return r;
       } catch (e) {
@@ -92,12 +99,12 @@ export async function translate(text) {
 }
 
 // Tarjimani qo'lda to'g'rilash (foydalanuvchi o'z variantini yozsa).
-export async function overrideTranslation(text, translation) {
-  const key = text.trim().toLowerCase();
+export async function overrideTranslation(text, translation, from = 'en') {
+  const key = cacheKey(text, from);
   const old = (await db.get('trcache', key).catch(() => null)) || { dict: [] };
   await db.put('trcache', { ...old, text: translation, source: 'Siz' }, key);
 }
 
-export function googleTranslateLink(text) {
-  return 'https://translate.google.com/?sl=en&tl=uz&op=translate&text=' + encodeURIComponent(text);
+export function googleTranslateLink(text, from = 'en') {
+  return 'https://translate.google.com/?sl=' + from + '&tl=uz&op=translate&text=' + encodeURIComponent(text);
 }
