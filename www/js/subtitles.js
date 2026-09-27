@@ -62,15 +62,15 @@ export async function readSubtitleFile(file) {
   }
   const cues = parseSubtitles(text);
   if (!cues.length) throw new Error('Subtitr faylidan birorta ham qator topilmadi (SRT yoki VTT boʻlishi kerak).');
-  splitBilingual(cues);
+  keepEnglishOnly(cues);
   return cues;
 }
 
-// ---------- Ikki tilli (inglizcha + o'zbekcha) subtitrlar ----------
-// Ko'p subtitrlarda har bir qatorda avval inglizcha, keyin o'zbekcha tarjima yoziladi:
+// ---------- Faqat inglizcha matnni qoldirish ----------
+// Ba'zi subtitrlarda har bir inglizcha qator ostida o'zbekcha tarjimasi ham yozilgan:
 //   My name is Lisa.
 //   Mening ismim Lisa.
-// Quyidagi funksiyalar har bir qatorning tilini taxmin qilib, ularni ajratadi.
+// Ilova faqat inglizcha subtitr bilan ishlaydi, shuning uchun o'zbekcha qatorlar olib tashlanadi.
 
 const EN_WORDS = new Set((
   'i you he she it we they me him her us them my your his its our their mine yours the a an '
@@ -99,7 +99,7 @@ function normApos(s) {
 }
 
 // Musbat — inglizcha, manfiy — o'zbekcha, 0 atrofida — noaniq (ism, undov va h.k.).
-export function langScore(line) {
+function langScore(line) {
   const raw = line.replace(/\[[^\]]*\]/g, ' ').replace(/<[^>]+>/g, ' ');
   let en = 0;
   let uz = 0;
@@ -135,7 +135,7 @@ function bestSplit(scores, enFirst) {
 }
 
 // Fayl ikki tillimi — aniqlaydi. 'en-uz', 'uz-en' yoki null qaytaradi.
-export function detectBilingual(cues) {
+function detectBilingual(cues) {
   const multi = cues.filter((c) => c.text.includes('\n'));
   if (multi.length < 3 || multi.length < cues.length * 0.5) return null;
   let enFirst = 0;
@@ -153,35 +153,19 @@ export function detectBilingual(cues) {
   return null;
 }
 
-// Ikki tilli bo'lsa: cue.text — faqat inglizcha, cue.uz — o'zbekcha tarjima.
-export function splitBilingual(cues) {
-  if (cues.some((c) => c.uz)) return 'en-uz';
+// Ikki tilli fayl bo'lsa, har bir gapdan faqat inglizcha qatorlarni qoldiradi.
+// Fayl ikki tilli bo'lmasa, hech narsa o'zgarmaydi. O'zgartirilgan bo'lsa true qaytaradi.
+export function keepEnglishOnly(cues) {
   const order = detectBilingual(cues);
-  if (!order) return null;
+  if (!order) return false;
   const enFirst = order === 'en-uz';
   for (const c of cues) {
     const lines = c.text.split('\n');
-    if (lines.length < 2) continue; // tarjimasiz qator
+    if (lines.length < 2) continue;
     const k = bestSplit(lines.map(langScore), enFirst);
-    const first = lines.slice(0, k);
-    const second = lines.slice(k);
-    const en = enFirst ? first : second;
-    const uz = enFirst ? second : first;
-    c.text = en.join('\n');
-    // o'zbekcha qatorlar odatda shunchaki uzun gap bo'lingan joy — bitta qatorga qo'shamiz
-    c.uz = uz.join(' ');
+    c.text = (enFirst ? lines.slice(0, k) : lines.slice(k)).join('\n');
   }
-  return order;
-}
-
-// Faqat tovush effekti / izoh: "[wind rushing]", "(laughs)", "♪"
-export function isSfx(cue) {
-  return !/[A-Za-z0-9]/.test(cue.text.replace(/\[[^\]]*\]|\([^)]*\)|[♪♫]/g, ''));
-}
-
-// Diktant va talaffuz uchun: [izohlar], (izohlar) va ♪ belgilarsiz matn
-export function speechText(text) {
-  return text.replace(/\[[^\]]*\]|\([^)]*\)|[♪♫]/g, ' ').replace(/\s+/g, ' ').trim();
+  return true;
 }
 
 const WORD_RE = /[A-Za-z0-9À-ɏ]+(?:['’][A-Za-zÀ-ɏ]+)*(?:-[A-Za-z0-9À-ɏ]+)*/g;

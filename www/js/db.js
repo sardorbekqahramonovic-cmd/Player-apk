@@ -95,8 +95,6 @@ export const DEFAULT_SETTINGS = {
   listenAutoPause: true,
   listenHideSubs: true,
   autoTranslateLine: false,
-  skipSfx: true,
-  transcriptUz: false,
 };
 
 export async function loadSettings() {

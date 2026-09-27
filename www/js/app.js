@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import {
   readSubtitleFile, tokenize, cueIndexAt, activeCueAt, compareDictation, formatTime, words,
-  splitBilingual, isSfx, speechText,
+  keepEnglishOnly,
 } from './subtitles.js';
 import { translate, overrideTranslation, googleTranslateLink } from './translate.js';
 import { speak, lockLandscape, VoiceRecorder } from './media.js';
@@ -23,7 +23,6 @@ const S = {
   cur: null,
   objectUrl: null,
   cues: [],
-  uzCues: [],
   offset: 0,
   mode: 'watch',
   subMode: 'en',
@@ -32,7 +31,6 @@ const S = {
   playIdx: -1,
   endFired: false,
   revealed: new Set(),
-  uzShown: new Set(),
   lastSave: 0,
   userScrollAt: 0,
   // shadowing
@@ -57,10 +55,6 @@ function toast(msg, ms = 2600) {
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function hasUz(cues) {
-  return !!(cues && cues.some((c) => c.uz));
 }
 
 function normWord(w) {
@@ -142,7 +136,6 @@ function renderLibrary() {
             <div class="meta">
               ${v.duration ? `<span class="badge">${formatTime(v.duration)}</span>` : ''}
               ${v.subEn ? `<span class="badge">EN ${v.subEn.length} gap</span>` : '<span class="badge" style="color:var(--warn)">Subtitr yoʻq</span>'}
-              ${v.subUz || hasUz(v.subEn) ? '<span class="badge">UZ</span>' : ''}
               ${pct ? `<span class="badge">${pct}%</span>` : ''}
             </div>
           </div>
@@ -171,14 +164,13 @@ $('#library-list').addEventListener('click', async (e) => {
 
 // ---- Video qo'shish ----
 
-const addForm = { video: null, en: null, uz: null };
+const addForm = { video: null, en: null };
 
 function resetAddForm() {
-  addForm.video = addForm.en = addForm.uz = null;
-  ['#add-video', '#add-sub-en', '#add-sub-uz'].forEach((s) => { $(s).value = ''; });
+  addForm.video = addForm.en = null;
+  ['#add-video', '#add-sub-en'].forEach((s) => { $(s).value = ''; });
   $('#add-video-name').textContent = 'Tanlanmagan';
   $('#add-sub-en-name').textContent = 'Tanlanmagan';
-  $('#add-sub-uz-name').textContent = 'Tanlanmagan';
   $('#add-title').value = '';
   $('#add-status').textContent = '';
   $('#add-save').disabled = false;
@@ -204,15 +196,6 @@ async function pickSub(input, nameEl, key) {
   if (!f) return;
   try {
     const cues = await readSubtitleFile(f);
-    if (hasUz(cues)) {
-      // Ikki tilli fayl: inglizchasi ham, o'zbekchasi ham shu faylda
-      addForm.en = cues;
-      addForm.uz = null;
-      $('#add-sub-en-name').textContent = `${f.name} — ${cues.length} ta gap (EN + UZ)`;
-      $('#add-sub-uz-name').textContent = 'Kerak emas — tarjima inglizcha subtitr ichida bor ✓';
-      toast('Ikki tilli subtitr aniqlandi: inglizcha + oʻzbekcha tarjima', 3500);
-      return;
-    }
     addForm[key] = cues;
     $(nameEl).textContent = `${f.name} — ${cues.length} ta gap`;
   } catch (err) {
@@ -223,7 +206,6 @@ async function pickSub(input, nameEl, key) {
   }
 }
 $('#add-sub-en').addEventListener('change', (e) => pickSub(e.target, '#add-sub-en-name', 'en'));
-$('#add-sub-uz').addEventListener('change', (e) => pickSub(e.target, '#add-sub-uz-name', 'uz'));
 
 function makeThumbnail(file) {
   return new Promise((resolve) => {
@@ -278,7 +260,6 @@ $('#add-save').addEventListener('click', async () => {
       thumb: thumb || null,
       duration: duration || 0,
       subEn: addForm.en,
-      subUz: addForm.uz,
       offset: 0,
       lastTime: 0,
       createdAt: Date.now(),
@@ -308,12 +289,8 @@ async function openPlayer(id, atTime) {
   S.objectUrl = URL.createObjectURL(blob);
   S.cur = meta;
   S.cues = meta.subEn || [];
-  S.uzCues = meta.subUz || [];
-  // Oldin qo'shilgan ikki tilli subtitrlarni ham ajratamiz
-  if (S.cues.length && !hasUz(S.cues) && splitBilingual(S.cues)) {
-    db.updateVideo(id, { subEn: S.cues });
-  }
-  S.uzShown = new Set();
+  // Subtitrda o'zbekcha tarjima qatorlari bo'lsa — faqat inglizchasini qoldiramiz
+  if (keepEnglishOnly(S.cues)) db.updateVideo(id, { subEn: S.cues });
   S.offset = meta.offset || 0;
   S.activeIdx = -1;
   S.playIdx = -1;
@@ -337,7 +314,6 @@ async function openPlayer(id, atTime) {
   });
 
   db.updateVideo(id, { openedAt: Date.now() });
-  $('#t-showuz').checked = !!S.settings.transcriptUz;
   setMode('watch');
   renderTranscript();
   updateLoopBtn();
@@ -465,35 +441,17 @@ function currentLine() {
   return i;
 }
 
-// [shamol esadi] kabi faqat tovush effekti bo'lgan qatorlarni o'tkazib yuborish kerakmi
-function skippable(i) {
-  return S.settings.skipSfx && S.cues[i] && isSfx(S.cues[i]);
-}
-
-function nextSpeech(from) {
-  let i = Math.max(0, from);
-  while (i < S.cues.length - 1 && skippable(i)) i++;
-  return Math.min(i, S.cues.length - 1);
-}
-
-function prevSpeech(from) {
-  let i = from;
-  while (i > 0 && skippable(i)) i--;
-  return Math.max(0, i);
-}
-
 function prevLine() {
   const i = currentLine();
-  if (i < 0) return seekToCue(nextSpeech(0));
+  if (i < 0) return seekToCue(0);
   const t = subTime();
   // gap boshidan 1 soniyadan ko'p o'tgan bo'lsa — shu gapning boshiga, aks holda oldingisiga
-  const target = t - S.cues[i].start > 1 && !skippable(i) ? i : prevSpeech(i - 1);
-  seekToCue(target);
+  seekToCue(t - S.cues[i].start > 1 ? i : Math.max(0, i - 1));
 }
 
 function nextLine() {
   const i = currentLine();
-  seekToCue(nextSpeech(Math.min(S.cues.length - 1, i + 1)));
+  seekToCue(Math.min(S.cues.length - 1, i + 1));
 }
 
 function replayLine() {
@@ -504,9 +462,8 @@ function replayLine() {
 // ---- Gap tugaganda ----
 
 function onCueEnd(i) {
-  if (S.loop) { seekToCue(i); return; }
-  if (skippable(i)) return; // tovush effekti — to'xtamaymiz
   if (S.mode === 'shadow') { shadowPause(i); return; }
+  if (S.loop) { seekToCue(i); return; }
   if (S.mode === 'listen' && $('#l-autopause').checked) {
     video.pause();
     setStatus('<svg><use href="#i-replay"/></svg>Qayta eshiting yoki davom eting');
@@ -528,18 +485,6 @@ function clearStatus() {
 
 // ---- Subtitr ko'rsatish ----
 
-function uzTextFor(idx) {
-  const cue = S.cues[idx];
-  if (!cue) return null;
-  if (cue.uz) return cue.uz; // ikki tilli subtitrdagi tayyor tarjima
-  if (!S.uzCues.length) return null;
-  const mid = (cue.start + cue.end) / 2;
-  // o'rtasiga eng yaqin keladigan o'zbekcha qator
-  let j = activeCueAt(S.uzCues, mid);
-  if (j < 0) j = activeCueAt(S.uzCues, cue.start + 0.1);
-  return j >= 0 ? S.uzCues[j].text : null;
-}
-
 function renderOverlay() {
   const en = $('#sub-overlay .sub-en');
   const uz = $('#sub-overlay .sub-uz');
@@ -548,37 +493,27 @@ function renderOverlay() {
   if (S.subMode === 'off') {
     en.innerHTML = '';
     uz.textContent = '';
+    // o'zbekcha subtitr bo'lsa-yu, inglizchasi bo'lmasa ham ko'rsatmaymiz
     return;
   }
   if (idx < 0) {
     en.innerHTML = '';
     uz.textContent = '';
-    if (!S.cues.length && S.uzCues.length && S.subMode !== 'hidden') {
-      const j = activeCueAt(S.uzCues, subTime());
-      uz.textContent = j >= 0 ? S.uzCues[j].text : '';
-    }
     return;
   }
   const cue = S.cues[idx];
-  const hidden = S.subMode === 'hidden' && !S.revealed.has(idx);
-  const wantUz = !hidden && (S.subMode === 'en+uz' || S.uzShown.has(idx)
-    || (S.settings.autoTranslateLine && S.subMode === 'en'));
-  // "UZ" tugmasi — bosilsa shu gapning o'zbekcha tarjimasi chiqadi
-  const btn = !hidden && !wantUz ? ' <button class="sub-uzbtn" data-uzbtn="' + idx + '">UZ</button>' : '';
-  en.innerHTML = cueHTML(cue) + btn;
+  en.innerHTML = cueHTML(cue);
   en.dataset.ci = idx;
+  const hidden = S.subMode === 'hidden' && !S.revealed.has(idx);
   en.classList.toggle('blurred', hidden);
 
   uz.textContent = '';
-  if (!wantUz) return;
-  const ready = uzTextFor(idx);
-  if (ready) { uz.textContent = ready; return; }
-  uz.textContent = '…';
-  translate(speechText(cue.text) || cue.text).then((r) => {
-    if (S.activeIdx === idx) uz.textContent = r.text;
-  }).catch((err) => {
-    if (S.activeIdx === idx) uz.textContent = S.uzShown.has(idx) ? err.message : '';
-  });
+  const wantUz = S.subMode === 'en+uz' || (S.settings.autoTranslateLine && !hidden && S.subMode === 'en');
+  if (wantUz && !hidden) {
+    translate(cue.text).then((r) => {
+      if (S.activeIdx === idx) uz.textContent = r.text;
+    }).catch(() => {});
+  }
 }
 
 function setSubMode(m) {
@@ -605,17 +540,13 @@ function renderTranscript() {
     tr.innerHTML = `<div class="empty small">Bu videoga inglizcha subtitr qoʻshilmagan.<br>Yuqoridagi <b>⋮</b> menyusidan .srt yoki .vtt faylini qoʻshing.</div>`;
     return;
   }
-  const showAll = $('#t-showuz').checked;
-  tr.innerHTML = S.cues.map((c) => {
-    const uz = showAll ? uzTextFor(c.i) || '' : '';
-    return `
-    <div class="tl${isSfx(c) ? ' sfx' : ''}" data-ci="${c.i}">
+  tr.innerHTML = S.cues.map((c) => `
+    <div class="tl" data-ci="${c.i}">
       <button class="tl-time" data-seek="${c.i}">${formatTime(c.start)}</button>
       <div class="tl-text">${cueHTML(c)}</div>
       <button class="tl-tr" data-tr="${c.i}">UZ</button>
-      <div class="tl-uz">${esc(uz)}</div>
-    </div>`;
-  }).join('');
+      <div class="tl-uz"></div>
+    </div>`).join('');
   refreshTranscriptBlur();
   highlightTranscript(true);
 }
@@ -646,12 +577,6 @@ function highlightTranscript(forceScroll) {
   }
 }
 
-$('#t-showuz').addEventListener('change', (e) => {
-  S.settings.transcriptUz = e.target.checked;
-  db.saveSettings(S.settings);
-  renderTranscript();
-});
-
 ['touchmove', 'wheel'].forEach((ev) => $('#transcript').addEventListener(ev, () => { S.userScrollAt = Date.now(); }, { passive: true }));
 
 $('#transcript').addEventListener('click', async (e) => {
@@ -663,11 +588,9 @@ $('#transcript').addEventListener('click', async (e) => {
     const i = +trBtn.dataset.tr;
     const out = trBtn.parentElement.querySelector('.tl-uz');
     if (out.textContent) { out.textContent = ''; return; }
-    const ready = uzTextFor(i);
-    if (ready) { out.textContent = ready; return; }
     out.textContent = 'Tarjima qilinmoqda…';
     try {
-      out.textContent = (await translate(speechText(S.cues[i].text) || S.cues[i].text)).text;
+      out.textContent = (await translate(S.cues[i].text)).text;
     } catch (err) {
       out.textContent = err.message;
     }
@@ -700,13 +623,7 @@ $('#sub-overlay').addEventListener('click', (e) => {
     return;
   }
   const w = e.target.closest('.w');
-  if (w) { openWord(+w.dataset.ci, +w.dataset.wi); return; }
-  // So'zdan tashqari joyni yoki "UZ" tugmasini bosish — gap tarjimasini ochish/yopish
-  const idx = S.activeIdx;
-  if (idx < 0 || !(en || e.target.closest('.sub-uz'))) return;
-  if (S.uzShown.has(idx)) S.uzShown.delete(idx);
-  else S.uzShown.add(idx);
-  renderOverlay();
+  if (w) openWord(+w.dataset.ci, +w.dataset.wi);
 });
 
 // ---- Boshqaruv tugmalari ----
@@ -852,7 +769,7 @@ $('#l-next').addEventListener('click', () => {
   const i = currentLine();
   const t = subTime();
   // gap oxirida turgan bo'lsak — keyingisiga, aks holda davom
-  if (i >= 0 && t >= S.cues[i].end - 0.2) seekToCue(nextSpeech(i + 1));
+  if (i >= 0 && t >= S.cues[i].end - 0.2) seekToCue(i + 1);
   else video.play().catch(() => {});
 });
 $('#l-check').addEventListener('click', () => {
@@ -860,12 +777,12 @@ $('#l-check').addEventListener('click', () => {
   if (i < 0) { toast('Avval gapni tinglang'); return; }
   const typed = $('#l-input').value.trim();
   if (!typed) { toast('Eshitganingizni yozing'); return; }
-  const { result, score } = compareDictation(speechText(S.cues[i].text), typed);
+  const { result, score } = compareDictation(S.cues[i].text, typed);
   const cls = score >= 90 ? 'ok' : score >= 60 ? '' : 'miss';
   $('#l-result').innerHTML = `<span class="score ${cls}">${score}%</span>` + result.map((r) => {
     if (r.extra) return `<span class="extra">${esc(r.w)}</span>`;
     return `<span class="${r.ok ? 'ok' : 'miss'}">${esc(r.w)}</span>`;
-  }).join(' ') + (uzTextFor(i) ? `<div class="dict-uz">${esc(uzTextFor(i))}</div>` : '');
+  }).join(' ');
   S.revealed.add(i);
   renderOverlay();
   refreshTranscriptBlur();
@@ -905,8 +822,7 @@ function renderShadowLine() {
     return;
   }
   el.classList.add('big');
-  const uz = uzTextFor(i);
-  el.innerHTML = cueHTML(S.cues[i]) + (uz ? `<div class="sh-uz">${esc(uz)}</div>` : '');
+  el.innerHTML = cueHTML(S.cues[i]);
   updateShadowMeta();
 }
 
@@ -956,8 +872,7 @@ async function shadowContinue() {
     S.sh.reps = 0;
     S.sh.idx = -1;
     updateShadowMeta();
-    const next = nextSpeech(i + 1);
-    if (i + 1 < S.cues.length && next > i) seekToCue(next);
+    if (i + 1 < S.cues.length) seekToCue(i + 1);
     else toast('Barakalla! Video oxiriga yetdingiz 🎉');
   }
 }
@@ -974,7 +889,7 @@ $('#sh-skip').addEventListener('click', () => {
   S.sh.reps = 0;
   S.sh.idx = -1;
   const i = currentLine();
-  seekToCue(nextSpeech(Math.min(S.cues.length - 1, i + 1)));
+  seekToCue(Math.min(S.cues.length - 1, i + 1));
 });
 
 async function startRecording() {
@@ -1037,12 +952,8 @@ function openWord(ci, wi) {
   const ws = words(cue.text);
   S.word = { ci, cue, words: ws, from: wi, to: wi, sentTr: null };
   $('#w-chips').innerHTML = ws.map((w, k) => `<button data-k="${k}">${esc(w)}</button>`).join('');
-  // Ikki tilli subtitrda gap tarjimasi tayyor — darhol ko'rsatamiz (internetsiz)
-  const ready = uzTextFor(ci);
-  S.word.sentTr = ready || null;
-  $('#w-sent-tr').textContent = ready || '';
+  $('#w-sent-tr').textContent = '';
   $('#w-sent-tr').classList.remove('loading');
-  $('#w-sent-btn').classList.toggle('hidden', !!ready);
   openModal('#sheet');
   updateSelection();
 }
@@ -1087,7 +998,7 @@ async function updateSelection() {
   } catch (err) {
     if (req !== wordReq) return;
     trEl.className = 'w-trans error';
-    trEl.textContent = err.message + (S.word.sentTr ? ' Gapning tarjimasi quyida koʻrsatilgan.' : '');
+    trEl.textContent = err.message;
     $('#w-edit').value = saved ? saved.translation : '';
     $('#w-edit').placeholder = 'Tarjimani oʻzingiz yozing';
   }
@@ -1112,18 +1023,16 @@ $('#w-speak').addEventListener('click', () => {
 });
 $('#w-sent-speak').addEventListener('click', () => {
   if (!S.word) return;
-  speak(speechText(S.word.cue.text) || S.word.cue.text, 0.85).catch((err) => toast(err.message));
+  speak(S.word.cue.text.replace(/\n/g, ' '), 0.85).catch((err) => toast(err.message));
 });
 
 $('#w-sent-btn').addEventListener('click', async () => {
   if (!S.word) return;
   const el = $('#w-sent-tr');
-  const ready = uzTextFor(S.word.ci);
-  if (ready) { el.textContent = ready; S.word.sentTr = ready; return; }
   el.classList.add('loading');
   el.textContent = 'Tarjima qilinmoqda…';
   try {
-    const r = await translate(speechText(S.word.cue.text) || S.word.cue.text);
+    const r = await translate(S.word.cue.text.replace(/\n/g, ' '));
     el.classList.remove('loading');
     el.textContent = r.text;
     S.word.sentTr = r.text;
@@ -1176,7 +1085,6 @@ function onSheetClosed() {
 $('#btn-player-menu').addEventListener('click', () => {
   if (!S.cur) return;
   $('#menu-sub-en-name').textContent = S.cues.length ? `${S.cues.length} ta gap yuklangan` : 'Yoʻq — fayl tanlang';
-  $('#menu-sub-uz-name').textContent = S.uzCues.length ? `${S.uzCues.length} ta gap yuklangan` : 'Yoʻq — fayl tanlang';
   $('#menu-title').value = S.cur.title;
   updateOffsetLabel();
   openModal('#modal-menu');
@@ -1194,32 +1102,25 @@ $$('#modal-menu [data-offset]').forEach((b) => b.addEventListener('click', async
   await db.updateVideo(S.cur.id, { offset: S.offset });
 }));
 
-async function replaceSub(input, key) {
+async function replaceSub(input) {
   const f = input.files[0];
   input.value = '';
   if (!f || !S.cur) return;
   try {
     const cues = await readSubtitleFile(f);
-    // Ikki tilli fayl qaysi tugma orqali tanlanmasin — inglizcha subtitr sifatida saqlanadi
-    if (hasUz(cues)) key = 'subEn';
-    await db.updateVideo(S.cur.id, { [key]: cues });
-    if (key === 'subEn') {
-      S.cues = cues;
-      S.revealed = new Set();
-      S.uzShown = new Set();
-      renderTranscript();
-    } else S.uzCues = cues;
-    if (hasUz(cues)) toast('Ikki tilli subtitr: inglizcha + oʻzbekcha tarjima yuklandi', 3500);
+    await db.updateVideo(S.cur.id, { subEn: cues });
+    S.cues = cues;
+    S.revealed = new Set();
+    renderTranscript();
     S.activeIdx = -2;
     tick(true);
-    if (!hasUz(cues)) toast(`Subtitr yuklandi: ${cues.length} ta gap`);
+    toast(`Subtitr yuklandi: ${cues.length} ta gap`);
     closeModal($('#modal-menu'));
   } catch (err) {
     toast(err.message, 4000);
   }
 }
-$('#menu-sub-en').addEventListener('change', (e) => replaceSub(e.target, 'subEn'));
-$('#menu-sub-uz').addEventListener('change', (e) => replaceSub(e.target, 'subUz'));
+$('#menu-sub-en').addEventListener('change', (e) => replaceSub(e.target));
 
 $('#menu-save-title').addEventListener('click', async () => {
   const t = $('#menu-title').value.trim();
@@ -1362,7 +1263,6 @@ async function renderSettings() {
   $('#set-speed').value = String(s.defaultSpeed);
   $('#set-pause-tap').checked = s.pauseOnWordTap;
   $('#set-autotr').checked = s.autoTranslateLine;
-  $('#set-skip-sfx').checked = s.skipSfx;
   $('#set-listen-pause').checked = s.listenAutoPause;
   $('#set-listen-hide').checked = s.listenHideSubs;
   $('#set-sh-rep').value = String(s.shadowRepeats);
@@ -1393,7 +1293,6 @@ bindSetting('#set-font', 'fontSize', (el) => +el.value, 'input');
 bindSetting('#set-speed', 'defaultSpeed', (el) => +el.value);
 bindSetting('#set-pause-tap', 'pauseOnWordTap', (el) => el.checked);
 bindSetting('#set-autotr', 'autoTranslateLine', (el) => el.checked);
-bindSetting('#set-skip-sfx', 'skipSfx', (el) => el.checked);
 bindSetting('#set-listen-pause', 'listenAutoPause', (el) => el.checked);
 bindSetting('#set-listen-hide', 'listenHideSubs', (el) => el.checked);
 bindSetting('#set-sh-rep', 'shadowRepeats', (el) => +el.value);

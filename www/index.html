@@ -85,8 +85,7 @@
           </select>
         </label>
         <label class="row">Soʻz bosilganda videoni toʻxtatish <input id="set-pause-tap" type="checkbox" class="switch"></label>
-        <label class="row">Subtitr ostida oʻzbekcha tarjimani avtomatik koʻrsatish (subtitrda tarjima boʻlmasa — internet orqali) <input id="set-autotr" type="checkbox" class="switch"></label>
-        <label class="row">Tovush effektlarini ([shamol esadi] kabi) listening va shadowing’da oʻtkazib yuborish <input id="set-skip-sfx" type="checkbox" class="switch"></label>
+        <label class="row">Subtitr ostida oʻzbekcha tarjimani avtomatik koʻrsatish (internet kerak) <input id="set-autotr" type="checkbox" class="switch"></label>
 
         <h3>Listening</h3>
         <label class="row">Har bir gapdan keyin toʻxtash <input id="set-listen-pause" type="checkbox" class="switch"></label>
@@ -111,7 +110,7 @@
 
         <h3>Qanday foydalaniladi?</h3>
         <div class="help">
-          <p><b>1. Video qoʻshing.</b> “Video qoʻshish” → video fayl (MP4 tavsiya etiladi) va inglizcha subtitr (.srt / .vtt). Agar subtitrda har bir inglizcha qator ostida oʻzbekcha tarjimasi boʻlsa (ikki tilli fayl), ilova ularni avtomatik ajratadi — tarjima internetsiz ishlaydi.</p>
+          <p><b>1. Video qoʻshing.</b> “Video qoʻshish” → video fayl (MP4 tavsiya etiladi) va inglizcha subtitr (.srt / .vtt).</p>
           <p><b>2. Tomosha.</b> Subtitrdagi istalgan soʻzni bosing — oʻzbekcha tarjimasi, talaffuzi va lugʻat maʼnolari chiqadi. Gapdagi qoʻshni soʻzlarni belgilab, butun iborani tarjima qilish mumkin.</p>
           <p><b>3. Listening.</b> Subtitr yashiriladi, har gapdan keyin video toʻxtaydi. Qayta eshiting, eshitganingizni yozib tekshiring (diktant), keyin matnni oching.</p>
           <p><b>4. Shadowing.</b> Video har gapdan keyin toʻxtaydi va sizga takrorlash uchun vaqt beradi. Ovozingizni yozib, asl talaffuz bilan solishtiring.</p>
@@ -169,7 +168,7 @@
 
       <div id="mode-panel" class="mode-panel">
         <div data-panel="watch" class="panel">
-          <p class="muted small">Soʻzni bosing — soʻz tarjimasi chiqadi. Subtitr yonidagi <b>UZ</b> tugmasi (yoki gapning boʻsh joyi) butun gapning oʻzbekcha tarjimasini ochadi. <b>CC</b> → <b>EN+UZ</b> — ikkala til doim koʻrinadi.</p>
+          <p class="muted small">Soʻzni bosing — tarjimasi chiqadi. <b>UZ</b> tugmasi butun gapni tarjima qiladi. Pastdagi matndan istalgan gapga oʻtish mumkin.</p>
         </div>
 
         <div data-panel="listen" class="panel hidden">
@@ -211,10 +210,7 @@
 
       <div class="transcript-head">
         <span>Matn</span>
-        <span class="t-opts">
-          <label class="tog small"><input type="checkbox" id="t-showuz"> Tarjima</label>
-          <label class="tog small"><input type="checkbox" id="t-autoscroll" checked> Avto-aylantirish</label>
-        </span>
+        <label class="tog small"><input type="checkbox" id="t-autoscroll" checked> Avto-aylantirish</label>
       </div>
       <div id="transcript" class="transcript"></div>
     </section>
@@ -236,14 +232,9 @@
         <span class="fp-name" id="add-video-name">Tanlanmagan</span>
       </label>
       <label class="file-pick">
-        <span class="fp-label">2. Inglizcha subtitr (.srt / .vtt) — oʻzbekcha tarjimasi ichida boʻlgan ikki tilli fayl ham boʻladi</span>
+        <span class="fp-label">2. Inglizcha subtitr (.srt / .vtt)</span>
         <input id="add-sub-en" type="file">
         <span class="fp-name" id="add-sub-en-name">Tanlanmagan</span>
-      </label>
-      <label class="file-pick">
-        <span class="fp-label">3. Alohida oʻzbekcha subtitr (ixtiyoriy)</span>
-        <input id="add-sub-uz" type="file">
-        <span class="fp-name" id="add-sub-uz-name">Tanlanmagan</span>
       </label>
       <label class="field">Nomi<input id="add-title" class="input" type="text" placeholder="Video nomi"></label>
       <div id="add-status" class="muted small"></div>
@@ -262,11 +253,6 @@
         <span class="fp-label">Inglizcha subtitrni almashtirish</span>
         <input id="menu-sub-en" type="file">
         <span class="fp-name" id="menu-sub-en-name"></span>
-      </label>
-      <label class="file-pick">
-        <span class="fp-label">Oʻzbekcha subtitr</span>
-        <input id="menu-sub-uz" type="file">
-        <span class="fp-name" id="menu-sub-uz-name"></span>
       </label>
       <div class="field">Subtitr sinxroni (kechiksa yoki oldinda boʻlsa)
         <div class="btn-row">
